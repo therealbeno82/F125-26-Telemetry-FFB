@@ -1,0 +1,20 @@
+# ── Build output ──────────────────────────────────────────────────────────────
+build/
+F1FFB.exe
+
+# ── Runtime artifacts (generated next to the exe) ────────────────────────────
+# ImGui window layout
+f1ffb_ui.ini
+# last-selected profile name
+f1ffb_active.txt
+# legacy single settings file
+f1ffb_settings.ini
+# user FFB profiles
+profiles/
+
+# ── Editor / OS cruft ─────────────────────────────────────────────────────────
+.vs/
+.vscode/
+*.user
+Thumbs.db
+desktop.ini

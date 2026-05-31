@@ -1,0 +1,3 @@
+// Windows resource script — application icon.
+// The lowest-numbered ICON resource is what Explorer/taskbar use for the exe.
+1 ICON "F1FFB.ico"
