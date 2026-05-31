@@ -182,5 +182,16 @@ forces come alive (typically 0.05–0.12).
 
 ---
 
+## License
+
+Released under the [MIT License](LICENSE) — free to use, modify, and
+distribute. Provided **as-is, with no warranty**: direct-drive wheels are
+powerful, and you use this software at your own risk.
+
+Built with [Dear ImGui](https://github.com/ocornut/imgui) (MIT) and
+[SDL2](https://github.com/libsdl-org/SDL) (zlib).
+
+---
+
 *Built and tuned on a SimuCube 2, but vendor-neutral — it talks to any
 DirectInput force-feedback wheel through SDL2.*
