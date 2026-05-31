@@ -114,7 +114,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     RegisterClassExW(&wc);
 
     g_hwnd = CreateWindowExW(
-        0, L"F1FFBClass", L"F1 FFB  ·  Force Feedback Enhancer",
+        0, L"F1FFBClass", L"F1 FFB  ·  Force Feedback Enhancer  ·  v1.0 Beta",
         WS_OVERLAPPEDWINDOW,
         100, 100, 900, 640,
         nullptr, nullptr, hInst, nullptr);

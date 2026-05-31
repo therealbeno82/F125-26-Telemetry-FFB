@@ -2,6 +2,10 @@
 build/
 F1FFB.exe
 
+# ── Release packaging artifacts ──────────────────────────────────────────────
+dist/
+*.zip
+
 # ── Runtime artifacts (generated next to the exe) ────────────────────────────
 # ImGui window layout
 f1ffb_ui.ini

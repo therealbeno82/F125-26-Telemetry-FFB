@@ -145,7 +145,7 @@ void ImGuiUI::drawHeader() {
     ImGui::Text("F1 FFB");
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    ImGui::TextDisabled("Force Feedback Enhancer  |  F1 25 / F1 26");
+    ImGui::TextDisabled("Force Feedback Enhancer  ·  %s  |  F1 25 / F1 26", APP_VERSION);
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 180.f);
 
     // Connection status mirrors the engine's safety gate (FFBEngine::compute):

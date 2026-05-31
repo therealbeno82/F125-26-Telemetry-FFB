@@ -3,6 +3,9 @@
 #include <atomic>
 #include <cmath>
 
+// Application version (shown in the title bar and header)
+#define APP_VERSION "v1.0 Beta"
+
 // ── F1 25/26 UDP packet IDs ───────────────────────────────────────────────────
 constexpr uint8_t PKT_MOTION    = 0;
 constexpr uint8_t PKT_CAR_TELEM = 6;
