@@ -11,6 +11,20 @@ constexpr const char* SETTINGS_PATH  = "f1ffb_settings.ini";
 constexpr const char* PROFILE_DIR    = "profiles";
 constexpr const char* ACTIVE_PROFILE = "f1ffb_active.txt";
 
+// Persistent count of how many times the app has been launched (used to show
+// an occasional donation reminder). Stored next to the exe.
+constexpr const char* LAUNCH_COUNT_PATH = "f1ffb_launches.txt";
+
+// Read the stored launch count, increment it, write it back, and return the
+// new value. No-throw; returns 1 on the first ever launch.
+int bumpLaunchCount();
+
+// Persistent "user opted out of the donation reminder" flag. Stored next to
+// the exe; once set, the reminder never appears again.
+constexpr const char* NAG_DISABLED_PATH = "f1ffb_nag_off.txt";
+bool isDonationNagDisabled();
+void setDonationNagDisabled(bool disabled);
+
 // Persist / restore user FFB tuning. Both are no-throw; load leaves any
 // missing field at its struct default, so older/partial files stay valid.
 void saveSettings(const FFBSettings& s, const char* path = SETTINGS_PATH);

@@ -13,6 +13,10 @@ f1ffb_ui.ini
 f1ffb_active.txt
 # legacy single settings file
 f1ffb_settings.ini
+# app launch counter (drives the donation reminder)
+f1ffb_launches.txt
+# "don't remind me again" opt-out flag
+f1ffb_nag_off.txt
 # user FFB profiles
 profiles/
 

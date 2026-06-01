@@ -4,7 +4,7 @@
 #include <cmath>
 
 // Application version (shown in the title bar and header)
-#define APP_VERSION "v1.0 Beta"
+#define APP_VERSION "v1.1 Beta"
 
 // ── F1 25/26 UDP packet IDs ───────────────────────────────────────────────────
 constexpr uint8_t PKT_MOTION    = 0;
@@ -41,6 +41,7 @@ struct TelemetryState {
     float suspFR          = 0.f;   // suspension deflection FR (m)
     float frontLatForce   = 0.f;   // FL+FR tyre lateral force (N) — true SAT source
     float frontLonForce   = 0.f;   // FL+FR tyre longitudinal force (N) — braking load
+    float frontVertForce  = 0.f;   // FL+FR tyre vertical load (N) — weight + downforce
     float suspVelFL       = 0.f;   // suspension velocity FL (m/s) — kerb impacts
     float suspVelFR       = 0.f;   // suspension velocity FR (m/s)
     float sideslip        = 0.f;   // vehicle sideslip angle (rad) — oversteer cue
@@ -86,6 +87,8 @@ struct FFBSettings {
     float maxOutput         = 1.00f;   // hard cap on final output (0..1) — safety/kids
     float softStartSec      = 0.50f;   // ramp force in over this long after re-arm/connect
     float minForce          = 0.00f;   // lift small forces past a belt/gear deadzone (0..0.3)
+    float loadSensitivity   = 0.00f;   // weight steering by front vertical load (0=off..1)
+    float loadRefN          = 8000.f;  // front vert load (FL+FR) treated as full weight
     float testForce         = 0.f;     // diagnostic: steady torque bypassing physics (not saved)
 };
 

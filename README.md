@@ -82,6 +82,8 @@ the next launch. Profiles are plain text files in the `profiles/` folder.
 | **Max Output (Safety)** | Hard ceiling on *all* force, applied last. Set low for a kids profile — nothing can exceed it. |
 | **Soft Start (s)** | Eases force in over this long after connecting/unpausing, so it never snaps on. |
 | **Max Force (N)** | Front tyre lateral force mapped to full torque. **Lower = stronger** (clips earlier); higher = lighter with more headroom. |
+| **Load Sensitivity** | *(Experimental)* Weights the wheel by the front tyres' vertical load — lighter when the front is unloaded (low speed, cresting a rise), heavier under high load (downforce at speed, trail-braking). **0 = off / original feel.** Only ever lightens, so it never adds clipping. |
+| **Load Reference (N)** | Front vertical load treated as fully weighted (used by Load Sensitivity). Lower it if the wheel feels too light everywhere. |
 | **Grip Loss Feel** | How strongly tyre slip reduces wheel force (>1 = exaggerated). |
 | **Understeer Cue** | Wheel lightening when the front tyres slide (>1 = exaggerated). |
 | **Oversteer Cue** | Counter-steer cue when the rear steps out (from vehicle sideslip). |
@@ -179,6 +181,18 @@ your wheel's DirectInput driver can't keep up past a certain rate.
 
 **Belt/gear wheel feels dead around centre** — raise **Min Force** until small
 forces come alive (typically 0.05–0.12).
+
+---
+
+## Support
+
+F1 FFB is free and built in spare time. If it's improved your driving and you'd
+like to support ongoing development, testing, and new features, you can leave a
+tip — there's also a **Support on Ko-fi** button in the app:
+
+☕ **[ko-fi.com/rapidbeno](https://ko-fi.com/rapidbeno)**
+
+No pressure — thank you for driving with it either way!
 
 ---
 

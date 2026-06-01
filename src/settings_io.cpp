@@ -27,6 +27,8 @@ void saveSettings(const FFBSettings& s, const char* path) {
     f << "maxOutput="          << s.maxOutput          << "\n";
     f << "softStartSec="       << s.softStartSec       << "\n";
     f << "minForce="           << s.minForce           << "\n";
+    f << "loadSensitivity="    << s.loadSensitivity    << "\n";
+    f << "loadRefN="           << s.loadRefN           << "\n";
 }
 
 // ── Load ────────────────────────────────────────────────────────────────────
@@ -60,8 +62,37 @@ bool loadSettings(FFBSettings& s, const char* path) {
         else if (key == "maxOutput")          s.maxOutput          = std::strtof(val.c_str(), nullptr);
         else if (key == "softStartSec")       s.softStartSec       = std::strtof(val.c_str(), nullptr);
         else if (key == "minForce")           s.minForce           = std::strtof(val.c_str(), nullptr);
+        else if (key == "loadSensitivity")    s.loadSensitivity    = std::strtof(val.c_str(), nullptr);
+        else if (key == "loadRefN")           s.loadRefN           = std::strtof(val.c_str(), nullptr);
     }
     return true;
+}
+
+// ── Launch counter ────────────────────────────────────────────────────────────
+int bumpLaunchCount() {
+    int count = 0;
+    {
+        std::ifstream f(LAUNCH_COUNT_PATH);
+        if (f) f >> count;
+    }
+    if (count < 0) count = 0;
+    ++count;
+    std::ofstream f(LAUNCH_COUNT_PATH, std::ios::trunc);
+    if (f) f << count << "\n";
+    return count;
+}
+
+bool isDonationNagDisabled() {
+    std::ifstream f(NAG_DISABLED_PATH);
+    if (!f) return false;
+    int v = 0;
+    f >> v;
+    return v != 0;
+}
+
+void setDonationNagDisabled(bool disabled) {
+    std::ofstream f(NAG_DISABLED_PATH, std::ios::trunc);
+    if (f) f << (disabled ? 1 : 0) << "\n";
 }
 
 // ── Named profiles ──────────────────────────────────────────────────────────

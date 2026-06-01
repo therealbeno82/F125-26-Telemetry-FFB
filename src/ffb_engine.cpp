@@ -114,6 +114,20 @@ FFBSignals FFBEngine::compute(float dt) {
     float baseTorque = clampf(s.frontLatForce / c.maxForceN, -1.f, 1.f);
     if (c.invertForce) baseTorque = -baseTorque;
 
+    // ── 1b. Load-sensitive steering weight (optional) ────────────────────────
+    // wheelVertForce is the downward load on the front tyres (N) — mechanical
+    // weight + aero downforce + braking weight transfer. The real self-aligning
+    // torque scales with this load, so optionally lighten the wheel when the
+    // front is unloaded (low speed, cresting a rise) and keep it full under high
+    // load (aero at speed, trail-braking). Blended in by loadSensitivity; 0 =
+    // original feel. Only ever attenuates, so it never adds new clipping.
+    if (c.loadSensitivity > 1e-4f && c.loadRefN > 1.f) {
+        const float LOAD_FLOOR = 0.4f;   // lightest the wheel gets at zero load
+        float loadNorm = clampf(s.frontVertForce / c.loadRefN, 0.f, 1.f);
+        float loadMul  = LOAD_FLOOR + (1.f - LOAD_FLOOR) * loadNorm;
+        baseTorque *= 1.f + c.loadSensitivity * (loadMul - 1.f);
+    }
+
     // ── 2. Slip angles → grip loss signals (for GUI + extra cues) ───────────
     // 8° of slip angle = fully saturated tyre
     const float SLIP_SCALE = 8.f * (3.14159f / 180.f);  // rad

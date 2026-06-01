@@ -205,6 +205,10 @@ void UdpReceiver::parseMotionEx(const uint8_t* payload) {
     // Front longitudinal forces — braking/traction load on the steered axle
     m_state.frontLonForce = ex->wheelLonForce[2] + ex->wheelLonForce[3];
 
+    // Front vertical load (FL=2, FR=3) — mechanical weight + aero downforce +
+    // braking weight transfer. Drives optional load-sensitive steering weight.
+    m_state.frontVertForce = ex->wheelVertForce[2] + ex->wheelVertForce[3];
+
     // Slip ratios: negative = wheel slower than road (lockup), positive = spin.
     // Front avg drives lockup judder, rear avg drives wheelspin rumble.
     m_state.frontSlipRatio = (ex->wheelSlipRatio[2] + ex->wheelSlipRatio[3]) * 0.5f;

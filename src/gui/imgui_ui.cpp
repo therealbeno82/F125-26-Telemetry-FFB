@@ -6,6 +6,11 @@
 #include <chrono>
 #include <cmath>
 #include <string>
+#include <shellapi.h>                 // ShellExecute — open the donate link in a browser
+#pragma comment(lib, "shell32.lib")
+
+// Support / donation link, opened by the footer button.
+static const char* KOFI_URL = "https://ko-fi.com/rapidbeno";
 
 // ── Colours — "Amber / Carbon" theme ──────────────────────────────────────────
 #define COL_ACCENT    ImVec4(0.961f,0.620f,0.043f,1.f)  // amber  #F59E0B
@@ -23,6 +28,18 @@
 static ImVec4 lerpCol(ImVec4 a, ImVec4 b, float t) {
     return { a.x + (b.x-a.x)*t, a.y + (b.y-a.y)*t,
              a.z + (b.z-a.z)*t, a.w + (b.w-a.w)*t };
+}
+
+// Vertical space the footer (separator + setup hint + Ko-fi button) needs.
+// The two main columns reserve this much at their bottom so the footer is
+// always pinned in view rather than overflowing into a scroll region.
+// Computed from the live style/font so it scales with DPI / font size.
+static float footerReserveH() {
+    const ImGuiStyle& st = ImGui::GetStyle();
+    return ImGui::GetFrameHeightWithSpacing()        // Ko-fi button row
+         + ImGui::GetTextLineHeightWithSpacing()     // telemetry setup hint line
+         + st.ItemSpacing.y * 3.f                     // separator + two Spacing()
+         + 6.f;                                       // small safety margin
 }
 
 ImGuiUI::ImGuiUI(TelemetryState& state, FFBSettings& settings,
@@ -44,6 +61,16 @@ bool ImGuiUI::init(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* ctx) {
     ImGui_ImplDX11_Init(device, ctx);
 
     refreshProfiles();
+
+    // Count this launch; show an occasional, dismissable donation reminder
+    // every 5th time the app starts (5th, 10th, 15th, …). m_nagNumber is which
+    // reminder this is (1, 2, 3, …) — the opt-out checkbox appears from the 2nd
+    // onward. A stored opt-out flag suppresses it permanently.
+    int launches = bumpLaunchCount();
+    bool everyFifth = (launches > 0 && launches % 5 == 0);
+    m_nagNumber = launches / 5;
+    m_showNag   = everyFifth && !isDonationNagDisabled();
+
     return true;
 }
 
@@ -125,6 +152,14 @@ void ImGuiUI::render() {
 
     ImGui::Columns(1);
     drawFooter();
+
+    // Occasional donation reminder — opened once when queued, then drawn every
+    // frame so ImGui keeps the modal alive until the user dismisses it.
+    if (m_showNag) {
+        ImGui::OpenPopup("Enjoying F1 FFB?");
+        m_showNag = false;
+    }
+    drawNagPopup();
 
     ImGui::End();
     ImGui::Render();
@@ -229,7 +264,9 @@ static void drawArcGauge(const char* label, float value,
 // ── Gauges panel ─────────────────────────────────────────────────────────────
 
 void ImGuiUI::drawGauges() {
-    ImGui::BeginChild("gauges", {0, 0}, false);
+    // Reserve footer height so the left column doesn't stretch to the very
+    // bottom and push the footer off-screen.
+    ImGui::BeginChild("gauges", {0, -footerReserveH()}, false);
 
     // Torque bar
     ImGui::TextDisabled("WHEEL TORQUE");
@@ -499,7 +536,10 @@ void ImGuiUI::drawProfiles() {
 
 void ImGuiUI::drawSettings() {
     ImGui::TextDisabled("FFB PARAMETERS");
-    ImGui::BeginChild("settings", {-1, -50}, true);
+    // Reserve room for the Save/Quit row (below the child) AND the window footer
+    // so neither the buttons nor the footer get pushed off the bottom.
+    ImGui::BeginChild("settings",
+                      {-1, -(ImGui::GetFrameHeightWithSpacing() + footerReserveH())}, true);
 
     auto slider = [&](const char* label, float& val, float lo, float hi,
                       const char* hint = nullptr) {
@@ -527,6 +567,21 @@ void ImGuiUI::drawSettings() {
         ImGui::SetTooltip("Front lateral force mapped to full wheel torque. "
                           "Lower = stronger / earlier clipping, "
                           "higher = lighter with more headroom");
+
+    slider("Load Sensitivity",  m_settings.loadSensitivity,    0.f, 1.f,
+           "EXPERIMENTAL. Weights steering by the front tyres' vertical load so "
+           "the wheel lightens when the front is unloaded (low speed, cresting) "
+           "and stays full under high load (downforce at speed, trail-braking). "
+           "0 = off / original feel. Only ever lightens, never adds clipping.");
+    // Reference load needs integer formatting — own slider rather than the lambda
+    ImGui::SetNextItemWidth(-170.f);
+    if (ImGui::SliderFloat("Load Reference (N)", &m_settings.loadRefN, 3000.f, 15000.f, "%.0f"))
+        m_engineDirty = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Front vertical load (FL+FR) treated as fully weighted. "
+                          "Below it the wheel lightens; at/above it stays full. "
+                          "Only matters when Load Sensitivity > 0. Lower if the "
+                          "wheel feels too light everywhere.");
 
     slider("Grip Loss Feel",    m_settings.gripLossStrength,   0.f, 2.f,
            "How strongly tyre slip reduces wheel force (>1 = exaggerated)");
@@ -591,6 +646,91 @@ void ImGuiUI::drawFooter() {
     ImGui::TextDisabled(
         "UDP port 20777  ·  F1 25/26: Settings → Telemetry → On, 60Hz, Unrestricted  "
         "·  Set in-game FFB to 0%%");
+    ImGui::Spacing();
+
+    // ── Support / donate button ───────────────────────────────────────────────
+    // Amber pill with dark text (matches the theme accent). Opens the Ko-fi page
+    // in the user's default browser. Plain text label — the default ImGui font
+    // has no ☕/♥ glyphs, so an emoji would render as "?".
+    ImGui::PushStyleColor(ImGuiCol_Button,        COL_ACCENT);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COL_ACCENT_HI);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  COL_ACCENT);
+    ImGui::PushStyleColor(ImGuiCol_Text,          COL_BG);     // dark text on amber
+    if (ImGui::Button("Support on Ko-fi"))
+        ShellExecuteA(nullptr, "open", KOFI_URL, nullptr, nullptr, SW_SHOWNORMAL);
+    ImGui::PopStyleColor(4);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Enjoying the app? Support development — opens %s", KOFI_URL);
+
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
+    ImGui::TextDisabled("Like the app? A coffee keeps development going. Thank you!");
+    ImGui::PopStyleColor();
+}
+
+// ── Donation reminder (every 5th launch) ───────────────────────────────────────
+
+void ImGuiUI::drawNagPopup() {
+    // Centre the modal over the window and give it a sensible fixed width.
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({440.f, 0.f}, ImGuiCond_Appearing);
+
+    if (!ImGui::BeginPopupModal("Enjoying F1 FFB?", nullptr,
+                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+        return;
+
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
+    ImGui::TextWrapped("Thanks for using F1 FFB!");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+
+    ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
+    ImGui::TextWrapped(
+        "This app is free and built in my spare time. If it's improved your "
+        "driving and you'd like to support ongoing development, testing and new "
+        "features, a small tip on Ko-fi goes a long way. No pressure — thank you "
+        "for driving with it either way!");
+    ImGui::PopTextWrapPos();
+
+    ImGui::Spacing();
+
+    // "Don't remind me again" — only from the 2nd reminder onward, so a brand
+    // new user gets a single gentle nudge before being offered the opt-out.
+    if (m_nagNumber >= 2)
+        ImGui::Checkbox("Don't remind me again", &m_nagOptOut);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Persist the opt-out (if ticked) on whichever button dismisses the popup.
+    auto dismiss = [&]() {
+        if (m_nagOptOut) setDonationNagDisabled(true);
+        ImGui::CloseCurrentPopup();
+    };
+
+    // Amber "Support on Ko-fi" — primary action (dark text on accent).
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_BG);
+    if (ImGui::Button("Support on Ko-fi", {190.f, 0.f})) {
+        ShellExecuteA(nullptr, "open", KOFI_URL, nullptr, nullptr, SW_SHOWNORMAL);
+        dismiss();
+    }
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Opens %s", KOFI_URL);
+
+    // Neutral "Maybe later" — de-emphasised so it doesn't compete with the CTA.
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button,        COL_PANEL);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COL_BORDER);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  COL_BORDER);
+    ImGui::PushStyleColor(ImGuiCol_Text,          COL_TEXT);
+    if (ImGui::Button("Maybe later", {130.f, 0.f}))
+        dismiss();
+    ImGui::PopStyleColor(4);
+
+    ImGui::EndPopup();
 }
 
 void ImGuiUI::shutdown() {

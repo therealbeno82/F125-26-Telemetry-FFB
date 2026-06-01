@@ -24,6 +24,7 @@ private:
     void drawDeviceSelector();
     void drawProfiles();
     void drawFooter();
+    void drawNagPopup();      // occasional donation reminder (every 5th launch)
     void applyStyleF1();
     void refreshProfiles();   // reload list + active index from disk
 
@@ -44,6 +45,9 @@ private:
     char m_newProfile[64] = "";       // text buffer for "Save As"
 
     bool m_testForce = false;         // diagnostic steady-force toggle
+    bool m_showNag   = false;         // queue the donation reminder this session
+    int  m_nagNumber = 0;             // which reminder this is (1st, 2nd, …)
+    bool m_nagOptOut = false;         // "don't remind me again" checkbox state
 
     // Torque history for mini-graph
     static constexpr int HISTORY = 200;
