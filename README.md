@@ -1,6 +1,8 @@
 # F1 FFB — Telemetry Force Feedback Enhancer
 ### EA F1 25 / F1 26  ·  Windows  ·  Direct-Drive & belt/gear wheels
 
+[![Latest release](https://img.shields.io/github/v/release/therealbeno82/F125-Telemetry-FFB?include_prereleases&label=latest%20release&color=F59E0B)](https://github.com/therealbeno82/F125-Telemetry-FFB/releases)
+
 A lightweight C++ app that reads F1's UDP telemetry and generates its own force
 feedback, sent to your wheel through SDL2's haptic layer. It replaces the game's
 built-in FFB with physics-driven forces — base torque from real tyre lateral
@@ -9,6 +11,23 @@ weight — all tunable live and saved into named profiles.
 
 Works with **any DirectInput force-feedback wheel** (SimuCube, Fanatec, Moza,
 Asetek, Simagic, Logitech, Thrustmaster, …).
+
+---
+
+## ⬇ Download & run (no setup)
+
+### **[➡ Download the latest version (ZIP)](https://github.com/therealbeno82/F125-Telemetry-FFB/releases/download/v1.2-beta/F1FFB-v1.2-beta.zip)**
+
+1. Click the link above to download the ZIP.
+2. Right-click it → **Extract All**.
+3. Run **F1FFB.exe** — that's it. No installer, no extra files (SDL2 is built in).
+
+> **Windows SmartScreen** may warn about an unrecognised app (the build isn't
+> code-signed). Click **More info → Run anyway**.
+
+Then set up the game's telemetry — see [Turn on telemetry](#3-turn-on-telemetry-in-f1-25--26) below.
+
+*Looking for older versions or release notes? See the [Releases page](https://github.com/therealbeno82/F125-Telemetry-FFB/releases). Want to build it yourself? See [Quick Start](#quick-start).*
 
 ---
 
