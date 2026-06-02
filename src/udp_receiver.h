@@ -28,7 +28,7 @@ private:
     std::atomic<bool> m_running{false};
     uintptr_t       m_sock{0};   // SOCKET (avoid winsock header here)
 
-    // Pause detection: track frameIdentifier so we know when physics is frozen
+    // Pause detection: track overallFrameIdentifier (continuous, never resets mid-session)
     uint32_t        m_lastFrame{0xFFFFFFFFu};
     int64_t         m_streakStartMs{0};
 };

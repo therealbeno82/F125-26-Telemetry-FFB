@@ -194,17 +194,22 @@ void ImGuiUI::drawHeader() {
 
     bool frozen   = (adv == 0) || (now - adv > FFB_PAUSE_FREEZE_MS);
     bool rearming = (now - streak < FFB_REARM_MS);
+    bool paused   = m_stats.gamePaused.load();   // online pause (Session packet)
+    bool aiDrive  = m_stats.aiInControl.load();  // AI driving: finished / pit lane
 
     if (lastPkt == 0) {
         ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
         ImGui::Text("● WAITING...");
-    } else if (!frozen && !rearming) {
+    } else if (!frozen && !rearming && !paused && !aiDrive) {
         ImGui::PushStyleColor(ImGuiCol_Text, COL_GREEN);
         ImGui::Text("● CONNECTED");
     } else {
-        // Paused / in menu / resuming → wheel released for safety
+        // Not actively driving → wheel released. Show why.
+        const char* reason = paused  ? "PAUSED"
+                           : aiDrive ? "AI DRIVING"
+                           :           "PAUSED";   // frozen / rearming (SP pause, menu)
         ImGui::PushStyleColor(ImGuiCol_Text, COL_YEL);
-        ImGui::Text("● PAUSED · FFB RELEASED");
+        ImGui::Text("● %s · FFB RELEASED", reason);
     }
     ImGui::PopStyleColor();
     ImGui::Separator();
@@ -285,7 +290,7 @@ void ImGuiUI::drawGauges() {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("How often the wheel is maxed out (force clipping). "
                               "Frequent clipping = you lose road detail; lower "
-                              "Overall Strength or raise Max Force.");
+                              "Overall Strength or raise Full-Scale Force.");
     }
     {
         float t = m_signals.torque;
@@ -302,13 +307,15 @@ void ImGuiUI::drawGauges() {
         ImGui::PopStyleColor(2);
     }
 
-    // Torque history graph
-    m_torqueHistory[m_historyIdx % HISTORY] = m_signals.torque;
-    m_historyIdx++;
+    // Torque history graph. Keep the index wrapped in [0, HISTORY) so it can
+    // never overflow to a negative value (signed overflow is UB, and a negative
+    // modulo would index the array out of bounds).
+    m_torqueHistory[m_historyIdx] = m_signals.torque;
+    m_historyIdx = (m_historyIdx + 1) % HISTORY;
     char overlay[32];
     snprintf(overlay, sizeof(overlay), "t=%+.2f", m_signals.torque);
     ImGui::PlotLines("##tgraph", m_torqueHistory, HISTORY,
-                     m_historyIdx % HISTORY, overlay,
+                     m_historyIdx, overlay,
                      -1.f, 1.f, {-1, 60});
 
     ImGui::Spacing();
@@ -541,38 +548,67 @@ void ImGuiUI::drawSettings() {
     ImGui::BeginChild("settings",
                       {-1, -(ImGui::GetFrameHeightWithSpacing() + footerReserveH())}, true);
 
-    auto slider = [&](const char* label, float& val, float lo, float hi,
-                      const char* hint = nullptr) {
+    // Percentage slider. The stored value stays a fraction (0..1, or 0..2 for the
+    // exaggeratable cues) so saved profiles are unchanged; only the DISPLAY is
+    // scaled ×100 and shown as a percentage, which reads more naturally and
+    // matches other FFB software. The local `pct` is rebuilt from `val` each
+    // frame, so external changes (profile load) stay in sync.
+    auto pct = [&](const char* label, float& val, float loFrac, float hiFrac,
+                   const char* hint = nullptr) {
+        float p = val * 100.f;
         ImGui::SetNextItemWidth(-170.f);
-        if (ImGui::SliderFloat(label, &val, lo, hi, "%.2f"))
+        if (ImGui::SliderFloat(label, &p, loFrac * 100.f, hiFrac * 100.f, "%.0f%%")) {
+            val = p / 100.f;
             m_engineDirty = true;
+        }
         if (hint && ImGui::IsItemHovered())
             ImGui::SetTooltip("%s", hint);
     };
 
-    slider("Overall Strength",  m_settings.overallStrength,    0.f, 1.f,
-           "Master FFB output scale");
-    slider("Max Output (Safety)", m_settings.maxOutput,        0.f, 1.f,
-           "Hard ceiling on ALL force, applied last. Set low for a kids profile "
-           "so the wheel can never exceed this no matter the other sliders.");
-    slider("Soft Start (s)",    m_settings.softStartSec,       0.f, 2.f,
-           "Ease force in over this many seconds after connecting or unpausing, "
-           "so the wheel never snaps to full. 0 = instant.");
+    pct("Overall Strength",  m_settings.overallStrength,    0.f, 1.f,
+        "Master GAIN — multiplies all force evenly. Turning it down makes the "
+        "WHOLE wheel lighter (small and large forces shrink by the same "
+        "proportion), keeping the relative feel but losing the strong end. "
+        "Different from Max Output: this scales, that one caps.");
+    pct("Max Output (Safety)", m_settings.maxOutput,        0.f, 1.f,
+        "Hard CEILING — applied last, after everything else. Forces below it "
+        "are left untouched; only peaks above it get flattened. Use it as a "
+        "safety limit (e.g. a kids profile): the wheel can NEVER exceed this, "
+        "no matter how the other sliders are set. Different from Overall "
+        "Strength: that scales every force down, this only clips the top.");
 
-    // Max force needs integer formatting — own slider rather than the %.2f lambda
+    // Soft Start is a TIME (seconds), not a proportion — keep it in seconds.
     ImGui::SetNextItemWidth(-170.f);
-    if (ImGui::SliderFloat("Max Force (N)", &m_settings.maxForceN, 4000.f, 20000.f, "%.0f"))
+    if (ImGui::SliderFloat("Soft Start (s)", &m_settings.softStartSec, 0.f, 2.f, "%.2f s"))
         m_engineDirty = true;
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Front lateral force mapped to full wheel torque. "
-                          "Lower = stronger / earlier clipping, "
-                          "higher = lighter with more headroom");
+        ImGui::SetTooltip("Ease force in over this many seconds after connecting "
+                          "or unpausing, so the wheel never snaps to full. "
+                          "0 = instant.");
 
-    slider("Load Sensitivity",  m_settings.loadSensitivity,    0.f, 1.f,
-           "EXPERIMENTAL. Weights steering by the front tyres' vertical load so "
-           "the wheel lightens when the front is unloaded (low speed, cresting) "
-           "and stays full under high load (downforce at speed, trail-braking). "
-           "0 = off / original feel. Only ever lightens, never adds clipping.");
+    // Full-scale force needs integer formatting — own slider rather than the lambda.
+    // NOTE: this is the in-game tyre force (N) that maps to full wheel output —
+    // a scaling reference, NOT a cap. Higher = lighter. The on-screen label was
+    // renamed from "Max Force" (which read like an output cap) for clarity; the
+    // saved setting key stays "maxForceN" so existing profiles are unaffected.
+    ImGui::SetNextItemWidth(-170.f);
+    if (ImGui::SliderFloat("Full-Scale Force (N)", &m_settings.maxForceN, 4000.f, 20000.f, "%.0f"))
+        m_engineDirty = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The in-game front-tyre force that fills the wheel to "
+                          "100%% output — think of it as the bucket size.\n"
+                          "HIGHER = lighter: it takes more force to saturate, so "
+                          "more headroom before clipping.\n"
+                          "LOWER = stronger: the wheel maxes out sooner, but "
+                          "clips earlier and loses detail at the top.\n"
+                          "(This scales the force; it does not cap it. Same "
+                          "convention as iRacing/AC max-force.)");
+
+    pct("Load Sensitivity",  m_settings.loadSensitivity,    0.f, 1.f,
+        "EXPERIMENTAL. Weights steering by the front tyres' vertical load so "
+        "the wheel lightens when the front is unloaded (low speed, cresting) "
+        "and stays full under high load (downforce at speed, trail-braking). "
+        "0 = off / original feel. Only ever lightens, never adds clipping.");
     // Reference load needs integer formatting — own slider rather than the lambda
     ImGui::SetNextItemWidth(-170.f);
     if (ImGui::SliderFloat("Load Reference (N)", &m_settings.loadRefN, 3000.f, 15000.f, "%.0f"))
@@ -583,24 +619,27 @@ void ImGuiUI::drawSettings() {
                           "Only matters when Load Sensitivity > 0. Lower if the "
                           "wheel feels too light everywhere.");
 
-    slider("Grip Loss Feel",    m_settings.gripLossStrength,   0.f, 2.f,
-           "How strongly tyre slip reduces wheel force (>1 = exaggerated)");
-    slider("Understeer Cue",    m_settings.understeerStrength, 0.f, 2.f,
-           "Wheel lightening when front tyres slide (>1 = exaggerated)");
-    slider("Oversteer Cue",     m_settings.oversteerStrength,  0.f, 1.f,
-           "Counter-kick when rear breaks away");
-    slider("Lockup Judder",     m_settings.lockupStrength,     0.f, 1.f,
-           "Front-wheel lockup vibration under braking (slip ratio)");
-    slider("Wheelspin Rumble",  m_settings.wheelspinStrength,  0.f, 1.f,
-           "Rear-wheel spin vibration on power (slip ratio)");
-    slider("Braking Weight",    m_settings.brakingStrength,    0.f, 1.f,
-           "How much the wheel firms up under braking load (lon force)");
-    slider("Smoothing (DD↑)",   m_settings.smoothing,          0.f, 0.5f,
-           "IIR filter — increase for DD wheels to reduce oscillation");
-    slider("Min Force",         m_settings.minForce,           0.f, 0.3f,
-           "Lifts small forces above the wheel's mechanical deadzone so faint "
-           "cues are still felt. Recommended for belt/gear wheels; leave at 0 "
-           "for direct-drive.");
+    pct("Grip Loss Feel",    m_settings.gripLossStrength,   0.f, 2.f,
+        "How strongly tyre slip reduces wheel force (>100% = exaggerated)");
+    pct("Understeer Cue",    m_settings.understeerStrength, 0.f, 2.f,
+        "Wheel lightening when front tyres slide (>100% = exaggerated)");
+    pct("Oversteer Cue",     m_settings.oversteerStrength,  0.f, 1.f,
+        "Counter-kick when rear breaks away");
+    pct("Lockup Judder",     m_settings.lockupStrength,     0.f, 1.f,
+        "Front-wheel lockup vibration under braking (slip ratio)");
+    pct("Wheelspin Rumble",  m_settings.wheelspinStrength,  0.f, 1.f,
+        "Rear-wheel spin vibration on power (slip ratio)");
+    pct("Braking Weight",    m_settings.brakingStrength,    0.f, 1.f,
+        "How much the wheel firms up under braking load (lon force)");
+    pct("Smoothing (DD↑)",   m_settings.smoothing,          0.f, 0.5f,
+        "Filters the output to tame DD-wheel oscillation. This is a LATENCY vs "
+        "smoothness trade: higher = smoother but laggier (adds roughly up to "
+        "~40ms of delay at max). Keep it low for the crispest, lowest-latency "
+        "feel; raise it only as much as needed to stop the wheel rattling.");
+    pct("Min Force",         m_settings.minForce,           0.f, 0.3f,
+        "Lifts small forces above the wheel's mechanical deadzone so faint "
+        "cues are still felt. Recommended for belt/gear wheels; leave at 0 "
+        "for direct-drive.");
     ImGui::TextDisabled("  Min Force: raise for belt/gear wheels (Logitech, "
                         "Thrustmaster); 0 for direct drive");
 

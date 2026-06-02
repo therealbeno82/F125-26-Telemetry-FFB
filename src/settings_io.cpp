@@ -2,6 +2,7 @@
 #include <fstream>
 #include <string>
 #include <cstdlib>
+#include <cmath>
 #include <algorithm>
 #include <filesystem>
 
@@ -29,6 +30,38 @@ void saveSettings(const FFBSettings& s, const char* path) {
     f << "minForce="           << s.minForce           << "\n";
     f << "loadSensitivity="    << s.loadSensitivity    << "\n";
     f << "loadRefN="           << s.loadRefN           << "\n";
+}
+
+// ── Validation ────────────────────────────────────────────────────────────────
+// Pin every field to the range its GUI slider allows. Ranges mirror the sliders
+// in imgui_ui.cpp; keep the two in sync if a slider range ever changes.
+void clampSettings(FFBSettings& s) {
+    // Clamp to [lo,hi], but first scrub NaN/Inf (which clampf passes through,
+    // since NaN compares false both ways) back to the struct default `def`.
+    auto fix = [](float v, float lo, float hi, float def) {
+        if (!std::isfinite(v)) v = def;
+        return clampf(v, lo, hi);
+    };
+    const FFBSettings d;   // built-in defaults, used as the fallback per field
+
+    s.overallStrength    = fix(s.overallStrength,    0.f, 1.f,   d.overallStrength);
+    s.maxOutput          = fix(s.maxOutput,          0.f, 1.f,   d.maxOutput);
+    s.softStartSec       = fix(s.softStartSec,       0.f, 2.f,   d.softStartSec);
+    s.maxForceN          = fix(s.maxForceN,       4000.f, 20000.f, d.maxForceN);
+    s.loadSensitivity    = fix(s.loadSensitivity,    0.f, 1.f,   d.loadSensitivity);
+    s.loadRefN           = fix(s.loadRefN,        3000.f, 15000.f, d.loadRefN);
+    s.gripLossStrength   = fix(s.gripLossStrength,   0.f, 2.f,   d.gripLossStrength);
+    s.understeerStrength = fix(s.understeerStrength, 0.f, 2.f,   d.understeerStrength);
+    s.oversteerStrength  = fix(s.oversteerStrength,  0.f, 1.f,   d.oversteerStrength);
+    s.lockupStrength     = fix(s.lockupStrength,     0.f, 1.f,   d.lockupStrength);
+    s.wheelspinStrength  = fix(s.wheelspinStrength,  0.f, 1.f,   d.wheelspinStrength);
+    s.brakingStrength    = fix(s.brakingStrength,    0.f, 1.f,   d.brakingStrength);
+    s.smoothing          = fix(s.smoothing,          0.f, 0.5f,  d.smoothing);
+    s.minForce           = fix(s.minForce,           0.f, 0.3f,  d.minForce);
+    s.minSpeedKmh        = fix(s.minSpeedKmh,        0.f, 200.f, d.minSpeedKmh);
+
+    if (s.ffbUpdateHz < FFB_MIN_HZ) s.ffbUpdateHz = FFB_MIN_HZ;
+    if (s.ffbUpdateHz > FFB_MAX_HZ) s.ffbUpdateHz = FFB_MAX_HZ;
 }
 
 // ── Load ────────────────────────────────────────────────────────────────────
@@ -65,6 +98,9 @@ bool loadSettings(FFBSettings& s, const char* path) {
         else if (key == "loadSensitivity")    s.loadSensitivity    = std::strtof(val.c_str(), nullptr);
         else if (key == "loadRefN")           s.loadRefN           = std::strtof(val.c_str(), nullptr);
     }
+    // Validate at the front door: a corrupt or hand-edited file can never push
+    // out-of-range values past this point into the running app.
+    clampSettings(s);
     return true;
 }
 

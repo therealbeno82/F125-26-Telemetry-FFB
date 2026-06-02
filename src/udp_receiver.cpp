@@ -24,6 +24,27 @@ struct PacketHeader {
     uint8_t  secondaryPlayerCarIndex;
 };
 
+// Session packet — only the leading fields up to m_gamePaused. These foundational
+// fields have been in this exact order since early F1 titles and sit before any
+// variable/array sections, so the offset is stable across the 2025/2026 formats.
+// m_gamePaused is the online-pause flag ("network game only") — the only reliable
+// per-frame pause signal, since an online session keeps simulating (AI drives the
+// car) while paused, so the physics frame counter does NOT freeze.
+struct PacketSessionHead {
+    uint8_t  m_weather;
+    int8_t   m_trackTemperature;
+    int8_t   m_airTemperature;
+    uint8_t  m_totalLaps;
+    uint16_t m_trackLength;
+    uint8_t  m_sessionType;
+    int8_t   m_trackId;
+    uint8_t  m_formula;
+    uint16_t m_sessionTimeLeft;
+    uint16_t m_sessionDuration;
+    uint8_t  m_pitSpeedLimit;
+    uint8_t  m_gamePaused;        // 0 = running, non-zero = paused (network games)
+};
+
 // CarMotionData (60 bytes per car)
 struct CarMotionData {
     float worldPositionX, worldPositionY, worldPositionZ;
@@ -145,13 +166,14 @@ void UdpReceiver::loop() {
 
         // Pause detection: the physics frame counter advances while driving and
         // freezes in menus / when paused (even though packets keep arriving).
-        // Track when it last changed, and when the current advancing run began
-        // so the engine can re-arm only after frames flow steadily again.
-        if (hdr->frameIdentifier != m_lastFrame) {
+        // Use overallFrameIdentifier (continuous across the whole session) rather
+        // than frameIdentifier (which resets at formation-lap→race and restarts)
+        // so online phase transitions don't look like a physics freeze.
+        if (hdr->overallFrameIdentifier != m_lastFrame) {
             const int64_t prevChange = m_stats.lastFrameAdvanceMs.load(std::memory_order_relaxed);
             if (now - prevChange > FFB_PAUSE_FREEZE_MS)   // resuming after a freeze
                 m_streakStartMs = now;
-            m_lastFrame = hdr->frameIdentifier;
+            m_lastFrame = hdr->overallFrameIdentifier;
             m_stats.lastFrameAdvanceMs.store(now, std::memory_order_relaxed);
             m_stats.frameStreakStartMs.store(m_streakStartMs, std::memory_order_relaxed);
         }
@@ -159,20 +181,88 @@ void UdpReceiver::loop() {
         const uint8_t* payload = buf + sizeof(PacketHeader);
         int            payloadLen = len - (int)sizeof(PacketHeader);
 
-        std::lock_guard<std::mutex> lock(m_mutex);
-        switch (hdr->packetId) {
-        case PKT_MOTION:
-            if (payloadLen >= (int)(sizeof(CarMotionData) * (hdr->playerCarIndex + 1)))
-                parseMotion(payload, hdr->playerCarIndex);
-            break;
-        case PKT_MOTION_EX:
-            if (payloadLen >= (int)sizeof(PacketMotionExData))
-                parseMotionEx(payload);
-            break;
-        case PKT_CAR_TELEM:
-            if (payloadLen >= (int)(sizeof(CarTelemetryData) * (hdr->playerCarIndex + 1)))
-                parseCarTelemetry(payload, hdr->playerCarIndex);
-            break;
+        // The game sends ~15 packet types; this app needs only four. Filter the
+        // rest out HERE, before touching the state mutex, so an irrelevant packet
+        // (Event, Participants, Lap, Damage, History, …) costs nothing beyond the
+        // header/liveness bookkeeping above. Lowest work on the hot path.
+
+        // Lap Data: detect when the player is NOT actively driving the car, so the
+        // engine can release force — the AI takes over at the end of a race/quali/
+        // session and through the pit lane, which is not a pause (frame counter
+        // keeps advancing, not in a menu) so nothing else catches it. Writes only
+        // an atomic; no state lock. Sent at the telemetry rate, so detection AND
+        // resume (when control returns) are both fast.
+        if (hdr->packetId == PKT_LAP_DATA) {
+            // The packet is header + m_lapData[CARS] + a 2-byte trailer. Derive the
+            // per-car stride from the payload length so it self-adjusts across the
+            // 2025/2026 formats; bail safely if it doesn't divide cleanly.
+            constexpr int CARS = 22, TRAILER = 2;
+            constexpr int OFF_PIT_STATUS = 34;     // LapData.m_pitStatus    (0=none,1=pit lane,2=pit area)
+            constexpr int OFF_RESULT_STATUS = 45;  // LapData.m_resultStatus (3..7 = finished/DNF/DSQ/NC/retired)
+            const int idx = hdr->playerCarIndex;
+            if (payloadLen > TRAILER && (payloadLen - TRAILER) % CARS == 0 &&
+                idx >= 0 && idx < CARS) {
+                const int stride = (payloadLen - TRAILER) / CARS;
+                const int base   = idx * stride;
+                if (stride > OFF_RESULT_STATUS && base + OFF_RESULT_STATUS < payloadLen) {
+                    const uint8_t pitStatus    = payload[base + OFF_PIT_STATUS];
+                    const uint8_t resultStatus = payload[base + OFF_RESULT_STATUS];
+                    const bool inPit    = (pitStatus != 0);       // pit lane or pit area
+                    const bool finished = (resultStatus >= 3);    // session over for this driver
+                    m_stats.aiInControl.store(inPit || finished, std::memory_order_relaxed);
+                }
+            }
+            continue;
+        }
+
+        // Session pause flag writes only an atomic — it never needs the state lock.
+        if (hdr->packetId == PKT_SESSION) {
+            // Online-pause flag. The session keeps running while paused (AI drives),
+            // so the frame counter doesn't freeze — this is the only signal that the
+            // player is sitting in the pause menu. The engine releases force on it.
+            if (payloadLen >= (int)sizeof(PacketSessionHead)) {
+                const auto* sd = reinterpret_cast<const PacketSessionHead*>(payload);
+                m_stats.gamePaused.store(sd->m_gamePaused != 0, std::memory_order_relaxed);
+            }
+            continue;
+        }
+
+        // Only these three feed the shared TelemetryState, so only these take the
+        // lock. Everything else is dropped without contending for the mutex.
+        if (hdr->packetId != PKT_MOTION &&
+            hdr->packetId != PKT_MOTION_EX &&
+            hdr->packetId != PKT_CAR_TELEM)
+            continue;
+
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            switch (hdr->packetId) {
+            case PKT_MOTION:
+                if (payloadLen >= (int)(sizeof(CarMotionData) * (hdr->playerCarIndex + 1)))
+                    parseMotion(payload, hdr->playerCarIndex);
+                break;
+            case PKT_MOTION_EX:
+                if (payloadLen >= (int)sizeof(PacketMotionExData))
+                    parseMotionEx(payload);
+                break;
+            case PKT_CAR_TELEM:
+                if (payloadLen >= (int)(sizeof(CarTelemetryData) * (hdr->playerCarIndex + 1)))
+                    parseCarTelemetry(payload, hdr->playerCarIndex);
+                break;
+            }
+        }
+
+        // Motion Ex carries the core FFB inputs (tyre forces, slip) and arrives
+        // once per physics frame, so use it as the "fresh frame" trigger that
+        // wakes the FFB engine immediately (event-driven, lowest latency). It's
+        // packet id 13 — typically the last of a frame — so by now the matching
+        // Car Telemetry for this frame has already been parsed too.
+        if (hdr->packetId == PKT_MOTION_EX) {
+            {
+                std::lock_guard<std::mutex> wlk(m_stats.wakeMutex);
+                m_stats.motionSeq.fetch_add(1, std::memory_order_relaxed);
+            }
+            m_stats.wakeCv.notify_one();
         }
     }
 }

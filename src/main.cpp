@@ -113,8 +113,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wc.hIconSm       = wc.hIcon;
     RegisterClassExW(&wc);
 
+    // Build the title from APP_VERSION (types.h) so it can never drift out of
+    // sync with the version shown in the header. %hs prints the narrow macro
+    // into the wide string.
+    wchar_t title[160];
+    swprintf(title, _countof(title),
+             L"F1 FFB  ·  Force Feedback Enhancer  ·  %hs", APP_VERSION);
+
     g_hwnd = CreateWindowExW(
-        0, L"F1FFBClass", L"F1 FFB  ·  Force Feedback Enhancer  ·  v1.0 Beta",
+        0, L"F1FFBClass", title,
         WS_OVERLAPPEDWINDOW,
         100, 100, 900, 640,
         nullptr, nullptr, hInst, nullptr);

@@ -70,38 +70,42 @@ the next launch. Profiles are plain text files in the `profiles/` folder.
 - grey = healthy headroom
 - yellow = occasional clipping
 - red = clipping often (you're losing road detail — lower Overall Strength or
-  raise Max Force)
+  raise Full-Scale Force)
 
 ---
 
 ## FFB Parameters
 
+Most strength sliders are shown as a **percentage**. The two cue sliders go to
+**200 %** so you can exaggerate them past the natural level.
+
 | Parameter | What it does |
 |-----------|--------------|
-| **Overall Strength** | Master output scale. |
-| **Max Output (Safety)** | Hard ceiling on *all* force, applied last. Set low for a kids profile — nothing can exceed it. |
+| **Overall Strength** | Master gain — multiplies *all* force evenly (scales). |
+| **Max Output (Safety)** | Hard ceiling on *all* force, applied last (caps — only flattens peaks, doesn't scale). Set low for a kids profile — nothing can exceed it. |
 | **Soft Start (s)** | Eases force in over this long after connecting/unpausing, so it never snaps on. |
-| **Max Force (N)** | Front tyre lateral force mapped to full torque. **Lower = stronger** (clips earlier); higher = lighter with more headroom. |
+| **Full-Scale Force (N)** | The in-game front-tyre force that fills the wheel to 100 % — a scaling reference, *not* a cap. **Higher = lighter** (more headroom before clipping); lower = stronger (clips sooner). Same convention as iRacing/AC max-force. |
 | **Load Sensitivity** | *(Experimental)* Weights the wheel by the front tyres' vertical load — lighter when the front is unloaded (low speed, cresting a rise), heavier under high load (downforce at speed, trail-braking). **0 = off / original feel.** Only ever lightens, so it never adds clipping. |
 | **Load Reference (N)** | Front vertical load treated as fully weighted (used by Load Sensitivity). Lower it if the wheel feels too light everywhere. |
-| **Grip Loss Feel** | How strongly tyre slip reduces wheel force (>1 = exaggerated). |
-| **Understeer Cue** | Wheel lightening when the front tyres slide (>1 = exaggerated). |
+| **Grip Loss Feel** | How strongly tyre slip reduces wheel force (>100 % = exaggerated). |
+| **Understeer Cue** | Wheel lightening when the front tyres slide (>100 % = exaggerated). |
 | **Oversteer Cue** | Counter-steer cue when the rear steps out (from vehicle sideslip). |
 | **Lockup Judder** | Vibration when the front wheels lock under braking. |
 | **Wheelspin Rumble** | Vibration when the rear wheels spin on power. |
 | **Braking Weight** | Firms the wheel up under heavy braking load. |
-| **Smoothing** | Output smoothing/interpolation. Increase for DD wheels to calm oscillation. |
+| **Smoothing** | Output smoothing. A latency-vs-smoothness trade: higher = smoother but laggier (adds up to ~40 ms at max). Keep it low for the crispest feel; raise only as needed to calm DD-wheel oscillation. |
 | **Min Force** | Lifts small forces above a wheel's mechanical deadzone. **Raise for belt/gear wheels** (Logitech, Thrustmaster); leave **0 for direct drive**. |
-| **Update Rate (Hz)** | How fast the wheel is updated. The 60 Hz telemetry is interpolated up to this rate. See the note below. |
+| **Update Rate (Hz)** | The *maximum* rate the wheel is updated. Output is phase-locked to each telemetry frame for lowest latency; this is the ceiling. See the note below. |
 | **Invert Force Direction** | Flip the wheel's pull direction if forces feel reversed. |
 
 ### A note on Update Rate
-The output is interpolated smoothly between the 60 Hz telemetry frames, so a
-higher rate is smoother — **but many DirectInput wheels stop applying force, or
-even become unstable, when updated too fast**, and that ceiling varies per wheel.
-**60–90 Hz suits most wheels.** If you raise it and the force cuts out or the app
-misbehaves, lower it again. (On the SimuCube 2 used for development, the limit
-was around 245 Hz.)
+The engine sends force the instant a fresh telemetry frame arrives (lowest
+latency), and this slider is the **ceiling** — the fastest it will ever update
+the wheel. **Many DirectInput wheels stop applying force, or even become
+unstable, when updated too fast**, and that ceiling varies per wheel, so it's
+left to you. **60–90 Hz suits most wheels.** If you raise it and the force cuts
+out or the app misbehaves, lower it again. (On the SimuCube 2 used for
+development, the limit was around 245 Hz.)
 
 ---
 
@@ -109,10 +113,18 @@ was around 245 Hz.)
 
 This app is built around the fact that strong wheels can hurt you:
 
-- **Telemetry-loss / pause release** — if the game is paused, exited, in a menu,
-  or minimised, the wheel is **released to zero** within a fraction of a second.
+- **Pause / menu release** — if the game is paused, exited, in a menu, or
+  minimised, the wheel is **released to zero** within a fraction of a second.
   The header shows **PAUSED · FFB RELEASED**. Force returns smoothly when you
   resume (re-arm hysteresis prevents a stray menu frame from spiking the wheel).
+- **Online-pause release** — in an online lobby the session keeps running while
+  you're in the pause menu (the AI drives your car), so it isn't a normal pause.
+  The app detects this and releases the wheel anyway, so it doesn't fight you
+  while you navigate menus.
+- **AI-takeover release** — when the AI takes over your car — at the end of a
+  race / qualifying / session, or while being driven through the **pit lane** —
+  the wheel is released (header shows **AI DRIVING · FFB RELEASED**). Force
+  returns the moment you regain control (e.g. crossing the pit-exit line).
 - **Soft start** — force always eases in rather than snapping on.
 - **Max Output cap** — a hard ceiling you can set per profile (great for kids).
 - **Speed fade** — no force below walking pace, so the pits stay calm.
@@ -176,8 +188,8 @@ the output path. If the wheel pulls the wrong way, tick **Invert Force Direction
 **App crashes / force drops at high Update Rate** — lower the **Update Rate**;
 your wheel's DirectInput driver can't keep up past a certain rate.
 
-**Wheel feels weak** — lower **Max Force (N)** (lower = stronger) and/or raise
-**Overall Strength**. Watch the CLIP meter so you don't over-drive it.
+**Wheel feels weak** — lower **Full-Scale Force (N)** (lower = stronger) and/or
+raise **Overall Strength**. Watch the CLIP meter so you don't over-drive it.
 
 **Belt/gear wheel feels dead around centre** — raise **Min Force** until small
 forces come alive (typically 0.05–0.12).

@@ -25,8 +25,15 @@ constexpr const char* NAG_DISABLED_PATH = "f1ffb_nag_off.txt";
 bool isDonationNagDisabled();
 void setDonationNagDisabled(bool disabled);
 
+// Pin every field to the same valid range its GUI slider enforces. Called
+// automatically at the end of loadSettings so a corrupt or hand-edited file
+// can never inject out-of-range values into the running app. Safe to call
+// directly too. No-throw.
+void clampSettings(FFBSettings& s);
+
 // Persist / restore user FFB tuning. Both are no-throw; load leaves any
-// missing field at its struct default, so older/partial files stay valid.
+// missing field at its struct default, so older/partial files stay valid,
+// and load runs clampSettings() so every value is in range before use.
 void saveSettings(const FFBSettings& s, const char* path = SETTINGS_PATH);
 bool loadSettings(FFBSettings& s, const char* path = SETTINGS_PATH);
 

@@ -18,6 +18,12 @@ bool FFBEngine::start() {
 
 void FFBEngine::stop() {
     m_running = false;
+    // Wake the engine if it's blocked waiting for the next telemetry frame, so
+    // it sees m_running == false and exits promptly instead of after the keepalive.
+    {
+        std::lock_guard<std::mutex> lk(m_stats.wakeMutex);
+    }
+    m_stats.wakeCv.notify_all();
     if (m_thread.joinable()) m_thread.join();
 }
 
@@ -31,14 +37,17 @@ void FFBEngine::loop() {
     using ns    = std::chrono::nanoseconds;
 
     auto prev = Clock::now();
+    uint64_t seenSeq = m_stats.motionSeq.load(std::memory_order_relaxed);
+
     while (m_running) {
-        // Output rate. The engine interpolates the 60Hz telemetry up to this
-        // rate (see compute). Clamped to the supported bounds to guard against a
-        // stale or out-of-range value from any source.
+        // The configured rate is now a CEILING, not a fixed poll rate: it's the
+        // minimum gap between sends (so the wheel is never updated faster than it
+        // can handle). Clamped to guard a stale/out-of-range value.
         int hz = m_settings.ffbUpdateHz;
         if (hz < FFB_MIN_HZ) hz = 90;
         if (hz > FFB_MAX_HZ) hz = FFB_MAX_HZ;
         const auto interval = ns(1'000'000'000LL / hz);
+
         const auto t0 = Clock::now();
 
         // Real elapsed time since the last cycle drives frame-rate-independent
@@ -51,13 +60,31 @@ void FFBEngine::loop() {
         m_callback(sig);
         m_stats.ffbUpdates.fetch_add(1, std::memory_order_relaxed);
 
-        // Busy-spin the last 500µs for precision, sleep the rest
-        const auto deadline = t0 + interval;
-        const auto sleepUntil = deadline - ns(500'000);
+        // ── Event-driven wait ────────────────────────────────────────────────
+        // Block until a fresh telemetry frame arrives (the UDP thread bumps
+        // motionSeq + notifies), so we compute on new data with near-zero added
+        // latency instead of polling on an independent clock. Fall back to a
+        // short keepalive so smoothing / soft-start / the safety release keep
+        // running if telemetry stalls (game closed, alt-tabbed, network drop).
+        const auto stallDeadline = t0 + ns(FFB_KEEPALIVE_MS * 1'000'000LL);
+        {
+            std::unique_lock<std::mutex> lk(m_stats.wakeMutex);
+            m_stats.wakeCv.wait_until(lk, stallDeadline, [&] {
+                return !m_running.load(std::memory_order_relaxed)
+                     || m_stats.motionSeq.load(std::memory_order_relaxed) != seenSeq;
+            });
+            seenSeq = m_stats.motionSeq.load(std::memory_order_relaxed);
+        }
+        if (!m_running) break;
+
+        // Honour the ceiling: never send closer together than `interval`. If the
+        // frame arrived sooner, hold here (sleep then busy-spin the last 500µs).
+        const auto earliestNext = t0 + interval;
+        const auto sleepUntil   = earliestNext - ns(500'000);
         if (Clock::now() < sleepUntil) {
             std::this_thread::sleep_until(sleepUntil);
         }
-        while (Clock::now() < deadline) { /* spin */ }
+        while (Clock::now() < earliestNext) { /* spin */ }
     }
 
     timeEndPeriod(1);
@@ -79,11 +106,15 @@ FFBSignals FFBEngine::compute(float dt) {
     }
 
     // ── SAFETY: release the wheel unless the car is actively being driven ────
-    // The game keeps sending packets in menus / when paused but FREEZES the
-    // physics frame counter. Gating on packets arriving isn't enough — it left
-    // dangerous torque spikes coming through the pause menu. So we require the
-    // frame to be advancing, plus a re-arm delay so a single stray menu frame
-    // can't flick the force back on. Covers pause, menus, exit and minimise.
+    // Two independent pause signals, covering both game modes:
+    //  1. Frame freeze — single-player / time-trial pause and menus FREEZE the
+    //     physics frame counter (even though packets keep arriving). We require
+    //     the frame to be advancing, plus a re-arm delay so a single stray menu
+    //     frame can't flick force back on. Also covers exit / minimise.
+    //  2. m_gamePaused — an ONLINE session keeps simulating while paused (AI
+    //     drives the car), so the frame counter does NOT freeze. The Session
+    //     packet's pause flag is the only thing that reveals the player is in
+    //     the menu. Without this the wheel thrashes against the AI's driving.
     {
         using namespace std::chrono;
         const int64_t now    = duration_cast<milliseconds>(
@@ -93,7 +124,11 @@ FFBSignals FFBEngine::compute(float dt) {
 
         const bool frozen    = (adv == 0) || (now - adv > FFB_PAUSE_FREEZE_MS);
         const bool rearming  = (now - streak < FFB_REARM_MS);
-        if (frozen || rearming) {
+        const bool paused    = m_stats.gamePaused.load(std::memory_order_relaxed);
+        // AI has the car (race/quali/session finished, or pit-lane auto-drive) —
+        // the player isn't driving, so release the wheel.
+        const bool aiDriving = m_stats.aiInControl.load(std::memory_order_relaxed);
+        if (frozen || rearming || paused || aiDriving) {
             m_smoothTorque = 0.f; m_smoothFriction = 0.f; m_smoothRumble = 0.f;
             m_softGain = 0.f;     // restart the soft-start ramp on next resume
             m_clipEma  = 0.f;
@@ -111,7 +146,10 @@ FFBSignals FFBEngine::compute(float dt) {
     // wheelLatForce is the actual force at the contact patch (N). Unlike lateral
     // G, it naturally saturates: as the front slides the force plateaus then
     // drops, so the wheel goes light during understeer for free — no modelling.
-    float baseTorque = clampf(s.frontLatForce / c.maxForceN, -1.f, 1.f);
+    // Guard the divisor: a corrupt/hand-edited profile could carry 0 here, and
+    // 0/0 = NaN sails through clampf (NaN compares false both ways) onto the wheel.
+    const float maxForceN = c.maxForceN > 1.f ? c.maxForceN : 1.f;
+    float baseTorque = clampf(s.frontLatForce / maxForceN, -1.f, 1.f);
     if (c.invertForce) baseTorque = -baseTorque;
 
     // ── 1b. Load-sensitive steering weight (optional) ────────────────────────

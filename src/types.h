@@ -2,12 +2,16 @@
 #include <cstdint>
 #include <atomic>
 #include <cmath>
+#include <mutex>
+#include <condition_variable>
 
 // Application version (shown in the title bar and header)
-#define APP_VERSION "v1.1 Beta"
+#define APP_VERSION "v1.2 Beta"
 
 // ── F1 25/26 UDP packet IDs ───────────────────────────────────────────────────
 constexpr uint8_t PKT_MOTION    = 0;
+constexpr uint8_t PKT_SESSION   = 1;
+constexpr uint8_t PKT_LAP_DATA  = 2;
 constexpr uint8_t PKT_CAR_TELEM = 6;
 constexpr uint8_t PKT_CAR_STATUS= 7;
 constexpr uint8_t PKT_MOTION_EX = 13;
@@ -23,8 +27,17 @@ constexpr int FFB_MAX_HZ = 360;
 // Pause/safety thresholds. The game freezes the physics frame counter when
 // paused or in menus while still sending packets, so we gate FFB on the frame
 // actually advancing rather than on packets merely arriving.
-constexpr int64_t FFB_PAUSE_FREEZE_MS = 200;  // no new frame this long → released
+// 350ms freeze threshold gives online races headroom for brief server-sync
+// stalls (safety car deploy, DRS zone broadcast, etc.) without false releases.
+constexpr int64_t FFB_PAUSE_FREEZE_MS = 350;  // no new frame this long → released
 constexpr int64_t FFB_REARM_MS        = 150;  // frames must advance this long to re-arm
+
+// Event-driven FFB wake: the engine normally sleeps until the next telemetry
+// frame arrives (lowest latency) but falls back to this keepalive period so
+// smoothing / soft-start / the safety release keep running if telemetry stalls.
+// Kept just above one 60Hz frame (16.7ms) so normal play stays phase-locked to
+// the telemetry and the keepalive only fires during a genuine stall/pause.
+constexpr int64_t FFB_KEEPALIVE_MS = 22;
 
 // ── Raw telemetry from UDP (written by UdpReceiver, read by FFBEngine) ────────
 struct TelemetryState {
@@ -100,8 +113,17 @@ struct AppStats {
     std::atomic<int64_t>  lastFrameAdvanceMs{0};  // ms when frameIdentifier last changed
     std::atomic<int64_t>  frameStreakStartMs{0};  // ms when current run of advancing began
     std::atomic<float>    clipLevel{0.f};         // 0..1 EMA of torque saturation (clipping)
+    std::atomic<bool>     gamePaused{false};      // Session packet m_gamePaused (online pause)
+    std::atomic<bool>     aiInControl{false};     // player not driving: session finished or in pit lane
     std::atomic<bool>     deviceConnected{false};
     char                  deviceName[128] = "None";
+
+    // Event-driven FFB wake. The UDP thread bumps motionSeq + notifies wakeCv on
+    // each fresh telemetry frame (Motion Ex); the FFB thread waits on it so it can
+    // compute on new data immediately instead of polling on a fixed clock.
+    std::atomic<uint64_t>   motionSeq{0};
+    std::mutex              wakeMutex;
+    std::condition_variable wakeCv;
 };
 
 // ── Inline helpers ────────────────────────────────────────────────────────────

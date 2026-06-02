@@ -44,6 +44,12 @@ private:
     int   m_effDamper   = -1;
     int   m_effSine     = -1;
 
+    // Last values pushed to the damper/sine effects. These change less often than
+    // the constant force, so we skip the driver round-trip when they're unchanged.
+    // INT_MIN = "nothing sent yet" sentinel, reset on each openDevice().
+    int   m_lastDamperLvl = 0x80000000;
+    int   m_lastSineLvl   = 0x80000000;
+
     std::vector<DeviceInfo> m_devices;
     int                 m_activeIdx = -1;
     mutable std::mutex  m_lock;

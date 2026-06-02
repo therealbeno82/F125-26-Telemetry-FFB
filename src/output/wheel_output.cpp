@@ -5,12 +5,20 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <cmath>
 
 // Map our normalized signals (-1..1 / 0..1) onto SDL's Sint16 force range.
 static constexpr int SDL_FORCE_MAX = 32767;
 
 static int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
+}
+
+// Final guard before the hardware: a non-finite value (NaN/Inf) would be
+// undefined behaviour when cast to int and could send a garbage level to a
+// direct-drive wheel. clampf does not catch NaN, so scrub it to 0 here.
+static float finiteOrZero(float v) {
+    return std::isfinite(v) ? v : 0.f;
 }
 
 // ── Lifetime ──────────────────────────────────────────────────────────────────
@@ -131,6 +139,8 @@ bool WheelOutput::openDevice(int index) {
     m_error.clear();
     m_sendOk.store(0);
     m_sendErrors.store(0);
+    m_lastDamperLvl = 0x80000000;   // force the first damper/sine update through
+    m_lastSineLvl   = 0x80000000;
     return true;
 }
 
@@ -176,7 +186,7 @@ void WheelOutput::send(const FFBSignals& sig) {
         e.constant.direction.type = SDL_HAPTIC_CARTESIAN;
         e.constant.direction.dir[0] = 1;
         e.constant.length       = SDL_HAPTIC_INFINITY;
-        int lvl = (int)(clampf(sig.torque, -1.f, 1.f) * SDL_FORCE_MAX);
+        int lvl = (int)(clampf(finiteOrZero(sig.torque), -1.f, 1.f) * SDL_FORCE_MAX);
         e.constant.level        = (Sint16)clampi(lvl, -SDL_FORCE_MAX, SDL_FORCE_MAX);
         if (SDL_HapticUpdateEffect(h, m_effConstant, &e) < 0) {
             if (m_sendErrors.fetch_add(1) == 0)   // capture the first error only
@@ -186,30 +196,37 @@ void WheelOutput::send(const FFBSignals& sig) {
         }
     }
 
-    // Damper — friction
+    // Damper — friction. Skip the driver round-trip when the level is unchanged.
     if (m_effDamper >= 0) {
-        SDL_HapticEffect e{};
-        e.type            = SDL_HAPTIC_DAMPER;
-        e.condition.length = SDL_HAPTIC_INFINITY;
-        Sint16 coeff = (Sint16)(clampf(sig.friction, 0.f, 1.f) * SDL_FORCE_MAX);
-        for (int a = 0; a < 3; a++) {
-            e.condition.right_coeff[a] = coeff;
-            e.condition.left_coeff[a]  = coeff;
-            e.condition.right_sat[a]   = SDL_FORCE_MAX;
-            e.condition.left_sat[a]    = SDL_FORCE_MAX;
+        int coeff = (int)(clampf(finiteOrZero(sig.friction), 0.f, 1.f) * SDL_FORCE_MAX);
+        if (coeff != m_lastDamperLvl) {
+            SDL_HapticEffect e{};
+            e.type            = SDL_HAPTIC_DAMPER;
+            e.condition.length = SDL_HAPTIC_INFINITY;
+            for (int a = 0; a < 3; a++) {
+                e.condition.right_coeff[a] = (Sint16)coeff;
+                e.condition.left_coeff[a]  = (Sint16)coeff;
+                e.condition.right_sat[a]   = SDL_FORCE_MAX;
+                e.condition.left_sat[a]    = SDL_FORCE_MAX;
+            }
+            SDL_HapticUpdateEffect(h, m_effDamper, &e);
+            m_lastDamperLvl = coeff;
         }
-        SDL_HapticUpdateEffect(h, m_effDamper, &e);
     }
 
-    // Sine — rumble
+    // Sine — rumble. Skip the driver round-trip when the magnitude is unchanged.
     if (m_effSine >= 0) {
-        SDL_HapticEffect e{};
-        e.type                   = SDL_HAPTIC_SINE;
-        e.periodic.direction.type = SDL_HAPTIC_CARTESIAN;
-        e.periodic.direction.dir[0] = 1;
-        e.periodic.period        = 50;
-        e.periodic.magnitude     = (Sint16)(clampf(sig.rumble, 0.f, 1.f) * SDL_FORCE_MAX);
-        e.periodic.length        = SDL_HAPTIC_INFINITY;
-        SDL_HapticUpdateEffect(h, m_effSine, &e);
+        int mag = (int)(clampf(finiteOrZero(sig.rumble), 0.f, 1.f) * SDL_FORCE_MAX);
+        if (mag != m_lastSineLvl) {
+            SDL_HapticEffect e{};
+            e.type                   = SDL_HAPTIC_SINE;
+            e.periodic.direction.type = SDL_HAPTIC_CARTESIAN;
+            e.periodic.direction.dir[0] = 1;
+            e.periodic.period        = 50;
+            e.periodic.magnitude     = (Sint16)mag;
+            e.periodic.length        = SDL_HAPTIC_INFINITY;
+            SDL_HapticUpdateEffect(h, m_effSine, &e);
+            m_lastSineLvl = mag;
+        }
     }
 }
