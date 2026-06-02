@@ -178,6 +178,7 @@ F1 25 / 26  ──UDP 20777 (60 Hz)──►  UdpReceiver  (parses motion, tyre 
 ```
 F125-Telemetry-FFB/
 ├── build.bat              ← build & run
+├── release.ps1            ← one-command build + package + GitHub release (maintainer)
 ├── CMakeLists.txt         ← fetches Dear ImGui + SDL2 (static)
 ├── app.rc / F1FFB.ico     ← application icon
 └── src/
