@@ -70,13 +70,16 @@ if (-not $env:GH_TOKEN) { throw "Could not read a GitHub token from Git Credenti
 
 # 3. Stamp APP_VERSION in src/types.h.
 $typesPath = Join-Path $root 'src/types.h'
-$types = Get-Content $typesPath -Raw
+# -Encoding UTF8 is REQUIRED: Windows PowerShell 5.1 defaults Get-Content to the
+# system ANSI codepage, which misreads UTF-8 (em-dash, box-drawing chars) and,
+# once written back as UTF-8, double-encodes the whole file into mojibake.
+$types = Get-Content $typesPath -Raw -Encoding UTF8
 $types = $types -replace '(#define APP_VERSION ")[^"]*(")', "`${1}$Title`${2}"
 [IO.File]::WriteAllText($typesPath, $types, (New-Object System.Text.UTF8Encoding($false)))
 
 # 4. Repoint the README download link to this version.
 $readmePath = Join-Path $root 'README.md'
-$readme = Get-Content $readmePath -Raw
+$readme = Get-Content $readmePath -Raw -Encoding UTF8   # UTF8 required (see note above)
 $readme = $readme -replace 'releases/download/[^/)]+/F1FFB-[^)]+\.zip',
                            "releases/download/$Version/F1FFB-$Version.zip"
 [IO.File]::WriteAllText($readmePath, $readme, (New-Object System.Text.UTF8Encoding($false)))
