@@ -41,7 +41,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repo = 'therealbeno82/F125-Telemetry-FFB'
+$repo = 'therealbeno82/F125-26-Telemetry-FFB'
 $root = $PSScriptRoot
 
 # Derive a display title from the tag if not supplied: v1.3-beta -> "v1.3 Beta"

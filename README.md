@@ -1,7 +1,7 @@
 # F1 FFB — Telemetry Force Feedback Enhancer
 ### EA F1 25 / F1 26  ·  Windows  ·  Direct-Drive & belt/gear wheels
 
-[![Latest release](https://img.shields.io/github/v/release/therealbeno82/F125-Telemetry-FFB?include_prereleases&label=latest%20release&color=F59E0B)](https://github.com/therealbeno82/F125-Telemetry-FFB/releases)
+[![Latest release](https://img.shields.io/github/v/release/therealbeno82/F125-26-Telemetry-FFB?include_prereleases&label=latest%20release&color=F59E0B)](https://github.com/therealbeno82/F125-26-Telemetry-FFB/releases)
 
 A lightweight C++ app that reads F1's UDP telemetry and generates its own force
 feedback, sent to your wheel through SDL2's haptic layer. It replaces the game's
@@ -19,7 +19,7 @@ Asetek, Simagic, Logitech, Thrustmaster, …).
 
 ## ⬇ Download & run (no setup)
 
-### **[➡ Download the latest version (ZIP)](https://github.com/therealbeno82/F125-Telemetry-FFB/releases/download/v2.0/F1FFB-v2.0.zip)**
+### **[➡ Download the latest version (ZIP)](https://github.com/therealbeno82/F125-26-Telemetry-FFB/releases/download/v2.0/F1FFB-v2.0.zip)**
 
 1. Click the link above to download the ZIP.
 2. Right-click it → **Extract All**.
@@ -30,7 +30,7 @@ Asetek, Simagic, Logitech, Thrustmaster, …).
 
 Then set up the game's telemetry — see [Turn on telemetry](#3-turn-on-telemetry-in-f1-25--26) below.
 
-*Looking for older versions or release notes? See the [Releases page](https://github.com/therealbeno82/F125-Telemetry-FFB/releases). Want to build it yourself? See [Quick Start](#quick-start).*
+*Looking for older versions or release notes? See the [Releases page](https://github.com/therealbeno82/F125-26-Telemetry-FFB/releases). Want to build it yourself? See [Quick Start](#quick-start).*
 
 ---
 
@@ -179,7 +179,7 @@ F1 25 / 26  ──UDP 20777 (60 Hz)──►  UdpReceiver  (parses motion, tyre 
 
 ## File structure
 ```
-F125-Telemetry-FFB/
+F125-26-Telemetry-FFB/
 ├── build.bat              ← build & run
 ├── release.ps1            ← one-command build + package + GitHub release (maintainer)
 ├── CMakeLists.txt         ← fetches Dear ImGui + SDL2 (static)
