@@ -6,9 +6,9 @@
 #include <condition_variable>
 
 // Application version (shown in the title bar and header)
-#define APP_VERSION "v1.2 Beta"
+#define APP_VERSION "v2.0"
 
-// ── F1 25/26 UDP packet IDs ───────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ F1 25/26 UDP packet IDs Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 constexpr uint8_t PKT_MOTION    = 0;
 constexpr uint8_t PKT_SESSION   = 1;
 constexpr uint8_t PKT_LAP_DATA  = 2;
@@ -24,7 +24,7 @@ constexpr uint8_t SESSION_TYPE_TIME_TRIAL = 18;
 
 // FFB output-rate bounds. The default rate is conservative; the maximum is left
 // generous so capable wheels aren't limited. Note that some DirectInput drivers
-// can stop applying force — or fault — when effect updates come too fast, and
+// can stop applying force Ã¢â‚¬â€ or fault Ã¢â‚¬â€ when effect updates come too fast, and
 // that ceiling varies per wheel, so the rate is a user-tuned slider.
 constexpr int FFB_MIN_HZ = 30;
 constexpr int FFB_MAX_HZ = 360;
@@ -34,7 +34,7 @@ constexpr int FFB_MAX_HZ = 360;
 // actually advancing rather than on packets merely arriving.
 // 350ms freeze threshold gives online races headroom for brief server-sync
 // stalls (safety car deploy, DRS zone broadcast, etc.) without false releases.
-constexpr int64_t FFB_PAUSE_FREEZE_MS = 350;  // no new frame this long → released
+constexpr int64_t FFB_PAUSE_FREEZE_MS = 350;  // no new frame this long Ã¢â€ â€™ released
 constexpr int64_t FFB_REARM_MS        = 150;  // frames must advance this long to re-arm
 
 // Event-driven FFB wake: the engine normally sleeps until the next telemetry
@@ -44,7 +44,7 @@ constexpr int64_t FFB_REARM_MS        = 150;  // frames must advance this long t
 // the telemetry and the keepalive only fires during a genuine stall/pause.
 constexpr int64_t FFB_KEEPALIVE_MS = 22;
 
-// ── Raw telemetry from UDP (written by UdpReceiver, read by FFBEngine) ────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Raw telemetry from UDP (written by UdpReceiver, read by FFBEngine) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 struct TelemetryState {
     // Motion packet
     float lateralG        = 0.f;   // g-force lateral
@@ -57,12 +57,12 @@ struct TelemetryState {
     float rearSlipAngle   = 0.f;   // avg rear  tyre slip angle (rad)
     float suspFL          = 0.f;   // suspension deflection FL (m)
     float suspFR          = 0.f;   // suspension deflection FR (m)
-    float frontLatForce   = 0.f;   // FL+FR tyre lateral force (N) — true SAT source
-    float frontLonForce   = 0.f;   // FL+FR tyre longitudinal force (N) — braking load
-    float frontVertForce  = 0.f;   // FL+FR tyre vertical load (N) — weight + downforce
-    float suspVelFL       = 0.f;   // suspension velocity FL (m/s) — kerb impacts
+    float frontLatForce   = 0.f;   // FL+FR tyre lateral force (N) Ã¢â‚¬â€ true SAT source
+    float frontLonForce   = 0.f;   // FL+FR tyre longitudinal force (N) Ã¢â‚¬â€ braking load
+    float frontVertForce  = 0.f;   // FL+FR tyre vertical load (N) Ã¢â‚¬â€ weight + downforce
+    float suspVelFL       = 0.f;   // suspension velocity FL (m/s) Ã¢â‚¬â€ kerb impacts
     float suspVelFR       = 0.f;   // suspension velocity FR (m/s)
-    float sideslip        = 0.f;   // vehicle sideslip angle (rad) — oversteer cue
+    float sideslip        = 0.f;   // vehicle sideslip angle (rad) Ã¢â‚¬â€ oversteer cue
     float frontSlipRatio  = 0.f;   // avg front slip ratio (-=lockup, +=spin)
     float rearSlipRatio   = 0.f;   // avg rear  slip ratio (+=wheelspin)
 
@@ -79,20 +79,20 @@ struct TelemetryState {
     float rearSlipNorm    = 0.f;   // 0..1
 };
 
-// ── FFB output signals (written by engine, read by output + GUI) ──────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ FFB output signals (written by engine, read by output + GUI) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 struct FFBSignals {
     float torque   = 0.f;   // -1..1   main wheel force
     float friction = 0.f;   //  0..1   damping
     float rumble   = 0.f;   //  0..1   kerb vibration
 };
 
-// ── User-tunable settings ─────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ User-tunable settings Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 struct FFBSettings {
     float overallStrength   = 0.85f;
     float gripLossStrength  = 0.70f;
     float understeerStrength= 0.80f;
     float oversteerStrength = 0.90f;
-    float smoothing         = 0.15f;   // IIR alpha (0=none, →1=heavy)
+    float smoothing         = 0.15f;   // IIR alpha (0=none, Ã¢â€ â€™1=heavy)
     float minSpeedKmh       = 10.f;
     int   ffbUpdateHz       = 90;      // FFB/output rate. Some DirectInput wheels
                                        // drop force when updated too fast; the
@@ -103,7 +103,7 @@ struct FFBSettings {
     float wheelspinStrength = 0.40f;   // rear wheelspin rumble on power
     float brakingStrength   = 0.50f;   // wheel firms up under braking load
     bool  brakingInvert     = false;   // flip braking-weight direction if it pulls off-centre
-    float maxOutput         = 1.00f;   // hard cap on final output (0..1) — safety/kids
+    float maxOutput         = 1.00f;   // hard cap on final output (0..1) Ã¢â‚¬â€ safety/kids
     float softStartSec      = 0.50f;   // ramp force in over this long after re-arm/connect
     float ttStartHoldSec    = 6.00f;   // Time Trial: hold force off this long after a standstill (AI drives the start)
     float minForce          = 0.00f;   // lift small forces past a belt/gear deadzone (0..0.3)
@@ -112,7 +112,7 @@ struct FFBSettings {
     float testForce         = 0.f;     // diagnostic: steady torque bypassing physics (not saved)
 };
 
-// ── App-wide statistics ───────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ App-wide statistics Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 struct AppStats {
     std::atomic<uint64_t> udpPackets{0};
     std::atomic<uint64_t> ffbUpdates{0};
@@ -126,7 +126,7 @@ struct AppStats {
     std::atomic<float>    lapDistance{0.f};       // Lap Data m_lapDistance (m into the lap; distinguishes restart vs mid-lap unpause)
     std::atomic<bool>     ttHolding{false};       // TT-start hold active (force held off, AI driving from standstill)
     // TEMP diagnostics for the TT-start hold investigation
-    std::atomic<uint32_t> dbgRearms{0};           // count of freeze→advance re-arms (streak changes)
+    std::atomic<uint32_t> dbgRearms{0};           // count of freezeÃ¢â€ â€™advance re-arms (streak changes)
     std::atomic<uint32_t> dbgDrops{0};            // count of lapDistance resets (>100m backward jump)
     std::atomic<float>    dbgDropSpeed{0.f};       // speedKmh at the last lapDistance reset
     std::atomic<bool>     deviceConnected{false};
@@ -140,7 +140,7 @@ struct AppStats {
     std::condition_variable wakeCv;
 };
 
-// ── Inline helpers ────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Inline helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 inline float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
