@@ -128,10 +128,62 @@ FFBSignals FFBEngine::compute(float dt) {
         // AI has the car (race/quali/session finished, or pit-lane auto-drive) —
         // the player isn't driving, so release the wheel.
         const bool aiDriving = m_stats.aiInControl.load(std::memory_order_relaxed);
-        if (frozen || rearming || paused || aiDriving) {
+
+        // ── TT start hold ────────────────────────────────────────────────────
+        // In Time Trial the AI drives the car for a few seconds at the start of a
+        // lap (entering TT, or a menu restart). Both go through a load, which shows
+        // up as a freeze→advance RE-ARM and/or a lap-distance RESET. We arm the
+        // hold on a re-arm or on entering TT, then 1.2s later cancel it ONLY if it
+        // was actually a mid-lap UNPAUSE — i.e. no lap reset happened AND we're
+        // deep into the lap. A restart resets the lap (kept); entering TT sits at
+        // the line (kept); a flying-lap line-crossing has a reset but NO re-arm so
+        // it never arms — a hot lap keeps its force. Scoped to Time Trial so
+        // race-start launches (player-controlled) are unaffected.
+        const uint8_t sess     = m_stats.sessionType.load(std::memory_order_relaxed);
+        const bool isTT        = (sess == SESSION_TYPE_TIME_TRIAL);
+        const bool enteredTT   = isTT && (m_prevSessionType != SESSION_TYPE_TIME_TRIAL);
+        m_prevSessionType      = sess;
+
+        const float lapDist    = m_stats.lapDistance.load(std::memory_order_relaxed);
+        const bool dropped     = (lapDist < m_dbgPrevLapDist - 100.f);
+        m_dbgPrevLapDist       = lapDist;
+        const bool rearmed     = (streak != m_prevStreak);
+        m_prevStreak           = streak;
+
+        if (dropped) m_lastDropMs = now;   // remember the last lap reset (restart marker)
+
+        // TEMP diagnostics
+        if (rearmed) m_stats.dbgRearms.fetch_add(1, std::memory_order_relaxed);
+        if (dropped) { m_stats.dbgDrops.fetch_add(1, std::memory_order_relaxed);
+                       m_stats.dbgDropSpeed.store(s.speedKmh, std::memory_order_relaxed); }
+
+        bool ttHold = false;
+        if (isTT && c.ttStartHoldSec > 0.01f) {
+            if (rearmed || enteredTT) {                    // a load just finished
+                m_ttHoldUntilMs = now + (int64_t)(c.ttStartHoldSec * 1000.f);
+                m_ttCheckMs     = now + 2500;              // classify late: the lap reset can lag
+                m_ttPending     = true;
+            }
+            if (m_ttPending && now >= m_ttCheckMs) {
+                m_ttPending = false;
+                // Cancel ONLY for a clear mid-lap unpause: no lap reset happened
+                // anywhere near this event AND we're still deep into the lap. A
+                // restart always resets the lap (even if it lags), so it's kept;
+                // when in doubt we hold (the safe direction). Reset timestamp is
+                // used (not a flag) so a later re-arm can't wipe the evidence.
+                const bool recentReset = (now - m_lastDropMs) < 2700;
+                if (!recentReset && lapDist > 250.f)
+                    m_ttHoldUntilMs = 0;
+            }
+            ttHold = (now < m_ttHoldUntilMs);
+        }
+        m_stats.ttHolding.store(ttHold, std::memory_order_relaxed);
+
+        if (frozen || rearming || paused || aiDriving || ttHold) {
             m_smoothTorque = 0.f; m_smoothFriction = 0.f; m_smoothRumble = 0.f;
             m_softGain = 0.f;     // restart the soft-start ramp on next resume
             m_clipEma  = 0.f;
+            m_prevSteer = s.steer; m_steerVelLP = 0.f;   // no braking-weight spike on resume
             m_stats.clipLevel.store(0.f, std::memory_order_relaxed);
             return { 0.f, 0.f, 0.f };
         }
@@ -206,14 +258,11 @@ FFBSignals FFBEngine::compute(float dt) {
     torque += slipCue * oversteer * c.oversteerStrength * 0.5f;
 
     // ── 5. Friction / damping ────────────────────────────────────────────────
-    // Extra damping when sliding — stops DD wheel oscillation
+    // Extra damping when sliding — stops DD wheel oscillation. (Braking weight
+    // used to ride this damper channel too, but many bases — direct-drive
+    // especially — ignore the hardware DAMPER effect, so it was never felt.
+    // It's synthesized on the constant-force channel instead — see section 7b.)
     float friction = clampf(0.08f + (frontNorm + rearNorm) * 0.10f, 0.f, 0.4f);
-
-    // Braking weight: front tyres load up under braking, so firm the wheel.
-    // Gated by the brake pedal, which also disambiguates the lon-force sign.
-    float brakeLoad = clampf(std::fabs(s.frontLonForce) / 18000.f, 0.f, 1.f)
-                    * clampf(s.brake * 1.5f, 0.f, 1.f);
-    friction += brakeLoad * c.brakingStrength * 0.3f;
 
     // ── 6. Rumble channel ─────────────────────────────────────────────────
     // Kerb rumble (suspension velocity) was removed: it buzzed constantly since
@@ -235,6 +284,34 @@ FFBSignals FFBEngine::compute(float dt) {
 
     rumble = clampf(rumble + lockup * c.lockupStrength
                            + spin   * c.wheelspinStrength, 0.f, 1.f);
+
+    // ── 7b. Braking weight (software damper) ─────────────────────────────────
+    // The hardware DAMPER channel is ignored by many bases (direct-drive
+    // especially), so braking weight is synthesized here on the constant-force
+    // channel that every wheel renders: a damper that resists steering motion
+    // under braking (heavier to turn), gated by brake pedal × front longitudinal
+    // load. Folded into the main torque so it rides Overall Strength, the speed
+    // fade and clip detection. Hard-capped for DD safety; direction follows
+    // Invert Force, with a dedicated Invert Braking Weight override for bases
+    // where the sign fights the wheel.
+    float brakeLoad = clampf(std::fabs(s.frontLonForce) / 18000.f, 0.f, 1.f)
+                    * clampf(s.brake * 1.5f, 0.f, 1.f);
+    float brakeWeight = c.brakingStrength * brakeLoad;
+    if (brakeWeight > 1e-4f) {
+        // Steering velocity from telemetry steer. Telemetry is ~60Hz but we run
+        // faster, so the raw difference is impulsive — low-pass it (~30ms).
+        float rawSteerVel = (s.steer - m_prevSteer) / (dt > 1e-4f ? dt : 1e-4f);
+        const float aSteer = clampf(dt / (0.03f + dt), 0.f, 1.f);
+        m_steerVelLP += aSteer * (rawSteerVel - m_steerVelLP);
+
+        float damper = -clampf(m_steerVelLP, -6.f, 6.f) * 0.06f;   // oppose motion
+        float bw = clampf(damper * brakeWeight, -0.30f, 0.30f);
+
+        const float dir = (c.invertForce   ? -1.f : 1.f)
+                        * (c.brakingInvert ? -1.f : 1.f);
+        torque += dir * bw;
+    }
+    m_prevSteer = s.steer;
 
     // ── 8. Overall scale + speed fade ────────────────────────────────────────
     const float scale = c.overallStrength * speedFactor;

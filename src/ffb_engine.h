@@ -36,4 +36,13 @@ private:
 
     float m_softGain       = 0.f;   // 0..1 soft-start ramp, reset on release
     float m_clipEma        = 0.f;   // rolling fraction of frames clipping
+    float m_prevSteer      = 0.f;   // last telemetry steer (for braking-weight damper)
+    float m_steerVelLP     = 0.f;   // low-passed steering velocity (steer/sec)
+    int64_t m_ttHoldUntilMs = 0;    // TT-start hold expiry (ms); force held off until then
+    int64_t m_prevStreak    = -1;   // last seen frameStreakStartMs (detects a re-arm/restart)
+    int64_t m_ttCheckMs     = 0;    // when to classify the re-arm as restart vs mid-lap unpause
+    bool    m_ttPending     = false;// awaiting that classification
+    int64_t m_lastDropMs    = -1000000; // ms of the last lap-distance reset (restart marker)
+    uint8_t m_prevSessionType = 0;  // detects entering Time Trial
+    float   m_dbgPrevLapDist = 0.f; // previous lapDistance (drop detection)
 };

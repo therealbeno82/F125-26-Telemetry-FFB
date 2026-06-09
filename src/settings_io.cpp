@@ -25,8 +25,10 @@ void saveSettings(const FFBSettings& s, const char* path) {
     f << "lockupStrength="     << s.lockupStrength     << "\n";
     f << "wheelspinStrength="  << s.wheelspinStrength  << "\n";
     f << "brakingStrength="    << s.brakingStrength    << "\n";
+    f << "brakingInvert="      << (s.brakingInvert ? 1 : 0) << "\n";
     f << "maxOutput="          << s.maxOutput          << "\n";
     f << "softStartSec="       << s.softStartSec       << "\n";
+    f << "ttStartHoldSec="     << s.ttStartHoldSec     << "\n";
     f << "minForce="           << s.minForce           << "\n";
     f << "loadSensitivity="    << s.loadSensitivity    << "\n";
     f << "loadRefN="           << s.loadRefN           << "\n";
@@ -47,6 +49,7 @@ void clampSettings(FFBSettings& s) {
     s.overallStrength    = fix(s.overallStrength,    0.f, 1.f,   d.overallStrength);
     s.maxOutput          = fix(s.maxOutput,          0.f, 1.f,   d.maxOutput);
     s.softStartSec       = fix(s.softStartSec,       0.f, 2.f,   d.softStartSec);
+    s.ttStartHoldSec     = fix(s.ttStartHoldSec,     0.f, 10.f,  d.ttStartHoldSec);
     s.maxForceN          = fix(s.maxForceN,       4000.f, 20000.f, d.maxForceN);
     s.loadSensitivity    = fix(s.loadSensitivity,    0.f, 1.f,   d.loadSensitivity);
     s.loadRefN           = fix(s.loadRefN,        3000.f, 15000.f, d.loadRefN);
@@ -92,8 +95,10 @@ bool loadSettings(FFBSettings& s, const char* path) {
         else if (key == "lockupStrength")     s.lockupStrength     = std::strtof(val.c_str(), nullptr);
         else if (key == "wheelspinStrength")  s.wheelspinStrength  = std::strtof(val.c_str(), nullptr);
         else if (key == "brakingStrength")    s.brakingStrength    = std::strtof(val.c_str(), nullptr);
+        else if (key == "brakingInvert")      s.brakingInvert      = std::atoi(val.c_str()) != 0;
         else if (key == "maxOutput")          s.maxOutput          = std::strtof(val.c_str(), nullptr);
         else if (key == "softStartSec")       s.softStartSec       = std::strtof(val.c_str(), nullptr);
+        else if (key == "ttStartHoldSec")     s.ttStartHoldSec     = std::strtof(val.c_str(), nullptr);
         else if (key == "minForce")           s.minForce           = std::strtof(val.c_str(), nullptr);
         else if (key == "loadSensitivity")    s.loadSensitivity    = std::strtof(val.c_str(), nullptr);
         else if (key == "loadRefN")           s.loadRefN           = std::strtof(val.c_str(), nullptr);

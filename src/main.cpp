@@ -123,7 +123,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     g_hwnd = CreateWindowExW(
         0, L"F1FFBClass", title,
         WS_OVERLAPPEDWINDOW,
-        100, 100, 900, 640,
+        100, 100, 1200, 780,
         nullptr, nullptr, hInst, nullptr);
 
     if (!createD3D(g_hwnd)) {

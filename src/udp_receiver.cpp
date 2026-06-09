@@ -79,7 +79,9 @@ struct CarTelemetryData {
     float    throttle;
     float    steer;           // -1..1
     float    brake;
-    float    clutch;
+    uint8_t  clutch;          // 0..100 (spec: uint8 — NOT float; wrong size here
+                              // mis-strides the per-car array online → garbage
+                              // brake/steer/throttle for non-zero car indices)
     int8_t   gear;
     uint16_t engineRPM;
     uint8_t  drs;
@@ -93,6 +95,11 @@ struct CarTelemetryData {
     uint8_t  surfaceType[4];
 };
 #pragma pack(pop)
+
+// Per-car array strides depend on these exact sizes: if a field's type is wrong,
+// indexing to a non-zero car (i.e. any online race) reads misaligned garbage.
+static_assert(sizeof(CarMotionData)     == 60, "CarMotionData must be 60 bytes (F1 spec)");
+static_assert(sizeof(CarTelemetryData)  == 60, "CarTelemetryData must be 60 bytes (F1 spec)");
 
 // ── UdpReceiver ───────────────────────────────────────────────────────────────
 
@@ -197,6 +204,7 @@ void UdpReceiver::loop() {
             // per-car stride from the payload length so it self-adjusts across the
             // 2025/2026 formats; bail safely if it doesn't divide cleanly.
             constexpr int CARS = 22, TRAILER = 2;
+            constexpr int OFF_LAP_DISTANCE = 20;   // LapData.m_lapDistance  (float, m into the lap)
             constexpr int OFF_PIT_STATUS = 34;     // LapData.m_pitStatus    (0=none,1=pit lane,2=pit area)
             constexpr int OFF_RESULT_STATUS = 45;  // LapData.m_resultStatus (3..7 = finished/DNF/DSQ/NC/retired)
             const int idx = hdr->playerCarIndex;
@@ -210,6 +218,10 @@ void UdpReceiver::loop() {
                     const bool inPit    = (pitStatus != 0);       // pit lane or pit area
                     const bool finished = (resultStatus >= 3);    // session over for this driver
                     m_stats.aiInControl.store(inPit || finished, std::memory_order_relaxed);
+
+                    float lapDist;   // unaligned read
+                    std::memcpy(&lapDist, payload + base + OFF_LAP_DISTANCE, sizeof(float));
+                    m_stats.lapDistance.store(lapDist, std::memory_order_relaxed);
                 }
             }
             continue;
@@ -223,6 +235,7 @@ void UdpReceiver::loop() {
             if (payloadLen >= (int)sizeof(PacketSessionHead)) {
                 const auto* sd = reinterpret_cast<const PacketSessionHead*>(payload);
                 m_stats.gamePaused.store(sd->m_gamePaused != 0, std::memory_order_relaxed);
+                m_stats.sessionType.store(sd->m_sessionType, std::memory_order_relaxed);
             }
             continue;
         }

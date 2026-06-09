@@ -49,8 +49,11 @@ private:
     int  m_nagNumber = 0;             // which reminder this is (1st, 2nd, …)
     bool m_nagOptOut = false;         // "don't remind me again" checkbox state
 
-    // Torque history for mini-graph
+    // Output history for the scope (channel-switchable: torque/friction/rumble)
     static constexpr int HISTORY = 200;
     float m_torqueHistory[HISTORY]{};
-    int   m_historyIdx = 0;
+    float m_frictionHistory[HISTORY]{};
+    float m_rumbleHistory[HISTORY]{};
+    int   m_historyIdx   = 0;
+    int   m_scopeChannel = 0;        // 0=torque, 1=friction, 2=rumble
 };
