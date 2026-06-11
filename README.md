@@ -19,7 +19,7 @@ Asetek, Simagic, Logitech, Thrustmaster, …).
 
 ## ⬇ Download & run (no setup)
 
-### **[➡ Download the latest version (ZIP)](https://github.com/therealbeno82/F125-26-Telemetry-FFB/releases/download/v2.0/F1FFB-v2.0.zip)**
+### **[➡ Download the latest version (ZIP)](https://github.com/therealbeno82/F125-26-Telemetry-FFB/releases/download/v2.1/F1FFB-v2.1.zip)**
 
 1. Click the link above to download the ZIP.
 2. Right-click it → **Extract All**.

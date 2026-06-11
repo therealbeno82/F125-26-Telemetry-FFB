@@ -6,7 +6,7 @@
 #include <condition_variable>
 
 // Application version (shown in the title bar and header)
-#define APP_VERSION "v2.0"
+#define APP_VERSION "v2.1"
 
 // ── F1 25/26 UDP packet IDs ───────────────────────────────────────────────────
 constexpr uint8_t PKT_MOTION    = 0;
