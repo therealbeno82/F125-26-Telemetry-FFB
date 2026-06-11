@@ -23,7 +23,9 @@ void saveSettings(const FFBSettings& s, const char* path) {
     f << "ffbUpdateHz="        << s.ffbUpdateHz        << "\n";
     f << "invertForce="        << (s.invertForce ? 1 : 0) << "\n";
     f << "lockupStrength="     << s.lockupStrength     << "\n";
+    f << "lockupHz="           << s.lockupHz           << "\n";
     f << "wheelspinStrength="  << s.wheelspinStrength  << "\n";
+    f << "wheelspinHz="        << s.wheelspinHz        << "\n";
     f << "brakingStrength="    << s.brakingStrength    << "\n";
     f << "brakingInvert="      << (s.brakingInvert ? 1 : 0) << "\n";
     f << "maxOutput="          << s.maxOutput          << "\n";
@@ -57,7 +59,9 @@ void clampSettings(FFBSettings& s) {
     s.understeerStrength = fix(s.understeerStrength, 0.f, 2.f,   d.understeerStrength);
     s.oversteerStrength  = fix(s.oversteerStrength,  0.f, 1.f,   d.oversteerStrength);
     s.lockupStrength     = fix(s.lockupStrength,     0.f, 1.f,   d.lockupStrength);
+    s.lockupHz           = fix(s.lockupHz,          10.f, 60.f,  d.lockupHz);
     s.wheelspinStrength  = fix(s.wheelspinStrength,  0.f, 1.f,   d.wheelspinStrength);
+    s.wheelspinHz        = fix(s.wheelspinHz,        5.f, 40.f,  d.wheelspinHz);
     s.brakingStrength    = fix(s.brakingStrength,    0.f, 1.f,   d.brakingStrength);
     s.smoothing          = fix(s.smoothing,          0.f, 0.5f,  d.smoothing);
     s.minForce           = fix(s.minForce,           0.f, 0.3f,  d.minForce);
@@ -93,7 +97,9 @@ bool loadSettings(FFBSettings& s, const char* path) {
         else if (key == "ffbUpdateHz")        s.ffbUpdateHz        = std::atoi(val.c_str());
         else if (key == "invertForce")        s.invertForce        = std::atoi(val.c_str()) != 0;
         else if (key == "lockupStrength")     s.lockupStrength     = std::strtof(val.c_str(), nullptr);
+        else if (key == "lockupHz")           s.lockupHz           = std::strtof(val.c_str(), nullptr);
         else if (key == "wheelspinStrength")  s.wheelspinStrength  = std::strtof(val.c_str(), nullptr);
+        else if (key == "wheelspinHz")        s.wheelspinHz        = std::strtof(val.c_str(), nullptr);
         else if (key == "brakingStrength")    s.brakingStrength    = std::strtof(val.c_str(), nullptr);
         else if (key == "brakingInvert")      s.brakingInvert      = std::atoi(val.c_str()) != 0;
         else if (key == "maxOutput")          s.maxOutput          = std::strtof(val.c_str(), nullptr);
@@ -134,6 +140,33 @@ bool isDonationNagDisabled() {
 void setDonationNagDisabled(bool disabled) {
     std::ofstream f(NAG_DISABLED_PATH, std::ios::trunc);
     if (f) f << (disabled ? 1 : 0) << "\n";
+}
+
+bool isQuickStartGuideDisabled() {
+    std::ifstream f(GUIDE_DISABLED_PATH);
+    if (!f) return false;
+    int v = 0;
+    f >> v;
+    return v != 0;
+}
+
+void setQuickStartGuideDisabled(bool disabled) {
+    std::ofstream f(GUIDE_DISABLED_PATH, std::ios::trunc);
+    if (f) f << (disabled ? 1 : 0) << "\n";
+}
+
+uint16_t loadUdpPort() {
+    std::ifstream f(UDP_PORT_PATH);
+    if (!f) return UDP_PORT;
+    int v = 0;
+    f >> v;
+    if (v < 1024 || v > 65535) return UDP_PORT;   // ignore junk / privileged ports
+    return (uint16_t)v;
+}
+
+void saveUdpPort(uint16_t port) {
+    std::ofstream f(UDP_PORT_PATH, std::ios::trunc);
+    if (f) f << port << "\n";
 }
 
 // ── Named profiles ──────────────────────────────────────────────────────────

@@ -32,12 +32,16 @@ public:
     const std::vector<DeviceInfo>& devices() const { return m_devices; }
     int  activeDeviceIndex() const { return m_activeIdx; }
     bool isActive() const { return m_haptic != nullptr; }
+    // Which optional effects the open device accepted (diagnostics for the GUI).
+    bool sineSupported()   const { return m_effSine   >= 0; }
+    bool damperSupported() const { return m_effDamper >= 0; }
     std::string lastError() const;                 // thread-safe copy
     unsigned long sendErrors() const { return m_sendErrors.load(); }
     unsigned long sendOk() const { return m_sendOk.load(); }
 
 private:
     void releaseEffects();
+    void closeDeviceLocked();    // body of closeDevice; caller must hold m_lock
 
     void* m_haptic = nullptr;    // SDL_Haptic* (opaque to keep SDL out of header)
     int   m_effConstant = -1;    // SDL effect ids (-1 = not created)
@@ -46,9 +50,11 @@ private:
 
     // Last values pushed to the damper/sine effects. These change less often than
     // the constant force, so we skip the driver round-trip when they're unchanged.
-    // INT_MIN = "nothing sent yet" sentinel, reset on each openDevice().
-    int   m_lastDamperLvl = 0x80000000;
-    int   m_lastSineLvl   = 0x80000000;
+    // Sentinel = "nothing sent yet" (no valid level), reset on each openDevice().
+    static constexpr int LVL_UNSET = -100000;   // outside the Sint16 level range
+    int   m_lastDamperLvl  = LVL_UNSET;
+    int   m_lastSineLvl    = LVL_UNSET;
+    int   m_lastSinePeriod = LVL_UNSET;         // ms; tracked so a pitch change updates too
 
     std::vector<DeviceInfo> m_devices;
     int                 m_activeIdx = -1;

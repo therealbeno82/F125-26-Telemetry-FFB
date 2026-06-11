@@ -51,6 +51,22 @@ if (-not $Title) {
     }) -join ' '
 }
 
+# Guard: the tag and the APP_VERSION stamp must agree on major.minor. The app's
+# startup update check compares its compiled-in APP_VERSION against the latest
+# release tag numerically — if a release ships tagged above its own stamp,
+# every user (on the new version) is told to update to what they already run.
+function Get-MajorMinor([string]$s) {
+    if ($s -match '(\d+)\.(\d+)') { return ,@([int]$Matches[1], [int]$Matches[2]) }
+    throw "Could not parse a major.minor version from '$s'."
+}
+$tagMM   = Get-MajorMinor $Version
+$titleMM = Get-MajorMinor $Title
+if ($tagMM[0] -ne $titleMM[0] -or $tagMM[1] -ne $titleMM[1]) {
+    throw ("Version mismatch: tag '$Version' is {0}.{1} but title/APP_VERSION '$Title' is {2}.{3}. " +
+           "They must match or the app's update check will nag users about their own version.") `
+           -f $tagMM[0], $tagMM[1], $titleMM[0], $titleMM[1]
+}
+
 Write-Host "== F1 FFB release  tag=$Version  title=`"$Title`" ==" -ForegroundColor Cyan
 
 # 1. Make sure gh is reachable (winget adds it to PATH; refresh this session).
@@ -76,6 +92,14 @@ $typesPath = Join-Path $root 'src/types.h'
 $types = Get-Content $typesPath -Raw -Encoding UTF8
 $types = $types -replace '(#define APP_VERSION ")[^"]*(")', "`${1}$Title`${2}"
 [IO.File]::WriteAllText($typesPath, $types, (New-Object System.Text.UTF8Encoding($false)))
+
+# Guard: verify the stamp actually landed. If the #define line ever changes
+# shape, the -replace above silently matches nothing and the build would ship
+# with the PREVIOUS version baked in (and self-nag once this tag publishes).
+$stamped = Get-Content $typesPath -Raw -Encoding UTF8
+if ($stamped -notmatch [regex]::Escape("#define APP_VERSION `"$Title`"")) {
+    throw "APP_VERSION stamp failed: src/types.h does not contain `#define APP_VERSION `"$Title`"`. Check the #define line format."
+}
 
 # 4. Repoint the README download link to this version.
 $readmePath = Join-Path $root 'README.md'

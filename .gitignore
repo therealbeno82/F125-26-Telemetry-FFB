@@ -17,6 +17,10 @@ f1ffb_settings.ini
 f1ffb_launches.txt
 # "don't remind me again" opt-out flag
 f1ffb_nag_off.txt
+# Quick Start Guide "don't show this again" opt-out flag
+f1ffb_guide_off.txt
+# user-set custom UDP port
+f1ffb_udp_port.txt
 # user FFB profiles
 profiles/
 

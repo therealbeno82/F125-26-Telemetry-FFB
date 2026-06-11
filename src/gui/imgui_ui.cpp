@@ -1,5 +1,7 @@
 #include "imgui_ui.h"
 #include "../settings_io.h"
+#include "../update_check.h"
+#include "../udp_receiver.h"
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
@@ -160,6 +162,27 @@ static void inputBar(const char* label, float value, ImVec4 col, bool bipolar = 
     ImGui::Text("%d", (int)(value * 100.f));
 }
 
+// Short display name for the Session packet's m_sessionType. Unknown values
+// show the raw number so a new game mode can be identified and supported.
+static const char* sessionTypeName(uint8_t t, char* buf, size_t n) {
+    switch (t) {
+        case 0:  return "--";
+        case 1: case 2: case 3: return "PRACTICE";
+        case 4:  return "SHORT P";
+        case 5:  return "Q1";
+        case 6:  return "Q2";
+        case 7:  return "Q3";
+        case 8:  return "SHORT Q";
+        case 9:  return "ONE-SHOT Q";
+        case 10: case 11: case 12: return "SHOOTOUT";
+        case 13: return "SHORT SO";
+        case 14: return "ONE-SHOT SO";
+        case 15: case 16: case 17: return "RACE";
+        case 18: return "TIME TRIAL";
+        default: snprintf(buf, n, "TYPE %u", t); return buf;
+    }
+}
+
 // Amber section header inside the params list (Strength / Cues / Output).
 static void groupHeader(const char* label) {
     ImGui::Spacing();
@@ -174,9 +197,9 @@ static void groupHeader(const char* label) {
 
 ImGuiUI::ImGuiUI(TelemetryState& state, FFBSettings& settings,
                  FFBSignals& signals, AppStats& stats,
-                 WheelOutput& output)
+                 WheelOutput& output, UdpReceiver& udp)
     : m_state(state), m_settings(settings), m_signals(signals),
-      m_stats(stats), m_output(output) {}
+      m_stats(stats), m_output(output), m_udp(udp) {}
 
 bool ImGuiUI::init(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* ctx) {
     IMGUI_CHECKVERSION();
@@ -192,12 +215,23 @@ bool ImGuiUI::init(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* ctx) {
 
     refreshProfiles();
 
+    // Seed the editable port field from the bound socket (= the saved port).
+    m_udpPort = (int)m_udp.boundPort();
+    if (m_udpPort == 0) m_udpPort = (int)loadUdpPort();   // bind failed at startup
+
+    // Fire-and-forget update check; the header shows a notice if one is found.
+    updatecheck::start();
+
+    // Quick Start Guide: shown every launch until the user opts out.
+    m_showGuide = !isQuickStartGuideDisabled();
+
     // Count this launch; show an occasional, dismissable donation reminder
-    // every 5th time the app starts (5th, 10th, 15th, …).
+    // every 5th time the app starts (5th, 10th, 15th, …). The guide takes
+    // priority — never stack two popups on one launch.
     int launches = bumpLaunchCount();
     bool everyFifth = (launches > 0 && launches % 5 == 0);
     m_nagNumber = launches / 5;
-    m_showNag   = everyFifth && !isDonationNagDisabled();
+    m_showNag   = everyFifth && !isDonationNagDisabled() && !m_showGuide;
 
     return true;
 }
@@ -279,7 +313,7 @@ void ImGuiUI::render() {
     float bodyH = ImGui::GetContentRegionAvail().y - footH;
     if (bodyH < 120.f) bodyH = 120.f;
     float totalW = ImGui::GetContentRegionAvail().x;
-    float rightW = 470.f;
+    float rightW = 440.f;
     if (rightW > totalW * 0.5f) rightW = totalW * 0.5f;   // guard narrow windows
     float leftW = totalW - rightW;
 
@@ -304,6 +338,12 @@ void ImGuiUI::render() {
     ImGui::PopStyleVar();
 
     drawFooter();
+
+    if (m_showGuide) {
+        ImGui::OpenPopup("Quick Start Guide");
+        m_showGuide = false;
+    }
+    drawGuidePopup();
 
     if (m_showNag) {
         ImGui::OpenPopup("Enjoying F1 FFB?");
@@ -347,6 +387,25 @@ void ImGuiUI::drawHeader() {
     ImGui::SameLine(0, 14);
     ImGui::TextDisabled("Force Feedback Enhancer  ·  %s  ·  F1 25 / F1 26", APP_VERSION);
 
+    // Update notice (startup check against GitHub Releases). Clickable.
+    if (updatecheck::available()) {
+        ImGui::SameLine(0, 14);
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_GREEN);
+        ImGui::Text("UPDATE %s AVAILABLE", updatecheck::latestTag());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("A newer version is out - click to open the download page.\n\n"
+                              "To upgrade: close this app, then extract the new F1FFB.exe\n"
+                              "from the ZIP into THIS folder, replacing the old exe.\n"
+                              "Your profiles and settings are stored next to the exe and\n"
+                              "carry straight over.");
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                ShellExecuteA(nullptr, "open", updatecheck::releasesUrl(),
+                              nullptr, nullptr, SW_SHOWNORMAL);
+        }
+    }
+
     // ── Connection status (right-aligned) - mirrors FFBEngine's safety gate ──
     using namespace std::chrono;
     auto now     = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
@@ -358,7 +417,7 @@ void ImGuiUI::drawHeader() {
     bool rearming = (now - streak < FFB_REARM_MS);
     bool paused   = m_stats.gamePaused.load();
     bool aiDrive  = m_stats.aiInControl.load();
-    bool ttHold   = m_stats.ttHolding.load();   // Time Trial start (AI driving away)
+    bool ttHold   = m_stats.ttHolding.load();   // AI lap start (TT / one-shot quali)
 
     const char* statusText; ImVec4 statCol;
     if (lastPkt == 0) {
@@ -368,7 +427,7 @@ void ImGuiUI::drawHeader() {
     } else {
         statusText = paused  ? "PAUSED · FFB RELEASED"
                    : aiDrive ? "AI DRIVING · FFB RELEASED"
-                   : ttHold  ? "TT START · FFB HELD"
+                   : ttHold  ? "AI START · FFB HELD"
                    :           "PAUSED · FFB RELEASED";
         statCol = COL_YEL;
     }
@@ -397,9 +456,9 @@ void ImGuiUI::drawGauges() {
     float gap  = ImGui::GetStyle().ItemSpacing.y;
     const float torqueH  = 120.f;
     const float signalsH = 190.f;
-    const float telemH   = 256.f;
+    const float telemH   = 280.f;   // fits the telemetry grid (3 rows) + inputs
     float scopeH = colH - torqueH - signalsH - telemH - gap * 3.f;
-    if (scopeH < 100.f) scopeH = 100.f;
+    if (scopeH < 90.f) scopeH = 90.f;   // output history: compact, no scrollbar
 
     // ── WHEEL TORQUE ──
     {
@@ -510,7 +569,9 @@ void ImGuiUI::drawGauges() {
             ImGui::TextUnformatted(val);
             ImGui::PopStyleColor();
         };
-        if (ImGui::BeginTable("telem", 3, ImGuiTableFlags_None)) {
+        // Four columns so the ten readouts fill the panel width in three rows
+        // (three columns needed four rows and forced a scrollbar).
+        if (ImGui::BeginTable("telem", 4, ImGuiTableFlags_None)) {
             char b[32];
             snprintf(b, sizeof(b), "%.0f km/h", m_state.speedKmh);                 cell("SPEED", b, COL_GREEN);
             snprintf(b, sizeof(b), "%.1f G", std::fabs(m_state.lateralG));          cell("LAT G", b, COL_GREEN);
@@ -518,9 +579,21 @@ void ImGuiUI::drawGauges() {
             snprintf(b, sizeof(b), "%.0f N", m_state.frontVertForce);               cell("VERT LOAD", b, COL_GREEN);
             snprintf(b, sizeof(b), "%.1f\xC2\xB0", m_state.sideslip * 57.2958f);    cell("SIDESLIP", b, COL_YEL);
             snprintf(b, sizeof(b), "%.2f", m_signals.friction);                     cell("FRICTION", b, COL_BLUE);
-            snprintf(b, sizeof(b), "%.2f", m_signals.rumble);                       cell("RUMBLE", b, COL_BLUE);
+            if (m_signals.rumble > 0.005f)
+                snprintf(b, sizeof(b), "%.2f @ %.0f Hz", m_signals.rumble, m_signals.rumbleHz);
+            else
+                snprintf(b, sizeof(b), "%.2f", m_signals.rumble);
+            cell("RUMBLE", b, COL_BLUE);
             snprintf(b, sizeof(b), "%llu", (unsigned long long)m_stats.udpPackets.load());
             cell("UDP PKT", b, COL_TEXT_SEC);
+            char sb[16];
+            cell("SESSION", sessionTypeName(m_stats.sessionType.load(), sb, sizeof(sb)),
+                 COL_TEXT_SEC);
+            // Raw slip ratios (front / rear) — for verifying the lockup/wheelspin
+            // gates: braking hard should push FRONT clearly negative (< -0.06),
+            // power-oversteer should push REAR positive (> +0.10).
+            snprintf(b, sizeof(b), "%+.2f / %+.2f", m_state.frontSlipRatio, m_state.rearSlipRatio);
+            cell("SLIP RATIO F/R", b, COL_YEL);
             ImGui::EndTable();
         }
 
@@ -537,7 +610,7 @@ void ImGuiUI::drawGauges() {
 // ── Right column: device ──────────────────────────────────────────────────────
 
 void ImGuiUI::drawDeviceSelector() {
-    beginPanel("p_device", {0, 212});
+    beginPanel("p_device", {0, 248});
     panelTitle("WHEEL DEVICE");
 
     const auto& devs = m_output.devices();
@@ -583,7 +656,6 @@ void ImGuiUI::drawDeviceSelector() {
             if (clicked) {
                 bool ok = m_output.openDevice(i);
                 m_deviceError = ok ? "" : m_output.lastError();
-                m_selectedDevice = i;
             }
         }
     }
@@ -596,6 +668,48 @@ void ImGuiUI::drawDeviceSelector() {
     }
     ImGui::PopStyleColor();
 
+    // ── UDP telemetry port ────────────────────────────────────────────────
+    // The game broadcasts to this port; change it only for a telemetry splitter
+    // that re-forwards on another port. Applies live (rebinds the socket).
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
+    ImGui::TextUnformatted("UDP PORT");
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Port the game sends telemetry to (game default 20777). "
+                          "Change it only if you run a telemetry splitter/relay that "
+                          "forwards on another port. Click Apply to switch live - it "
+                          "must match the UDP Port in the game's telemetry settings.");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(78.f);
+    int port = m_udpPort;
+    if (ImGui::InputInt("##udpport", &port, 0, 0)) m_udpPort = port;  // clamp on Apply
+    ImGui::SameLine();
+    bool portDirty = (m_udpPort != (int)m_udp.boundPort());
+    ImGui::BeginDisabled(!portDirty);
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_BG);
+    if (ImGui::Button("Apply")) {
+        int p = m_udpPort < 1024 ? 1024 : (m_udpPort > 65535 ? 65535 : m_udpPort);
+        m_udpPort = p;
+        if (m_udp.rebind((uint16_t)p)) {
+            saveUdpPort((uint16_t)p);
+            m_portError.clear();
+        } else {
+            m_portError = "Port " + std::to_string(p) + " is in use - reverted to "
+                        + std::to_string(m_udp.boundPort()) + ".";
+            m_udpPort = (int)m_udp.boundPort();
+        }
+    }
+    ImGui::PopStyleColor();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("active %u", m_udp.boundPort());
+    if (!m_portError.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_RED);
+        ImGui::TextWrapped("%s", m_portError.c_str());
+        ImGui::PopStyleColor();
+    }
+
     if (ImGui::Checkbox("Send test force (25%)", &m_testForce))
         m_settings.testForce = m_testForce ? 0.25f : 0.f;
     if (ImGui::IsItemHovered())
@@ -604,11 +718,29 @@ void ImGuiUI::drawDeviceSelector() {
     ImGui::SameLine();
     ImGui::TextDisabled("out: %+.2f", m_signals.torque);
 
+    if (ImGui::Checkbox("Send test rumble (50%)", &m_testRumble))
+        m_settings.testRumble = m_testRumble ? 0.5f : 0.f;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Vibrates the wheel at the Lockup Pitch frequency, independent "
+                          "of telemetry - confirms the rumble channel works on your base. "
+                          "Toggle off/on to apply a new pitch.\n\n"
+                          "Feel the test FORCE but not the test RUMBLE? Your wheel's tuning "
+                          "software has periodic/sine effects disabled or at 0%% gain - "
+                          "enable them there and the rumble will come through.");
+
     if (m_output.isActive()) {
         unsigned long ok = m_output.sendOk(), err = m_output.sendErrors();
         ImGui::PushStyleColor(ImGuiCol_Text, err ? COL_RED : COL_TEXT_SEC);
         ImGui::Text("FFB sent: %lu   errors: %lu", ok, err);
         ImGui::PopStyleColor();
+        if (!m_output.sineSupported()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, COL_YEL);
+            ImGui::TextWrapped("This wheel exposes no periodic (sine) effect - lockup "
+                               "judder and wheelspin rumble can't be rendered. Check "
+                               "your wheel's tuning software: DirectInput periodic/sine "
+                               "effects may be disabled or at 0%% gain.");
+            ImGui::PopStyleColor();
+        }
     }
     if (!m_deviceError.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, COL_RED);
@@ -621,32 +753,29 @@ void ImGuiUI::drawDeviceSelector() {
 // ── Right column: profiles ────────────────────────────────────────────────────
 
 void ImGuiUI::drawProfiles() {
-    beginPanel("p_profile", {0, 132});
+    beginPanel("p_profile", {0, 110});
     panelTitle("PROFILE", m_engineDirty ? "MODIFIED" : nullptr, COL_YEL);
 
     int n = (int)m_profiles.size();
     bool hasActive = (m_activeProfile >= 0 && m_activeProfile < n);
 
-    // Horizontal profile pills (click switches + loads live).
-    if (n > 0) {
-        float gap = 6.f;
-        float bw = (ImGui::GetContentRegionAvail().x - (n - 1) * gap) / n;
-        if (bw < 52.f) bw = 52.f;
+    // Dropdown selector — picking a profile loads it live. The combo's list
+    // scrolls internally, so any number of saved profiles fits without the
+    // panel filling up (the old horizontal pills ran out of room).
+    const char* preview = hasActive ? m_profiles[m_activeProfile].c_str() : "(no profile)";
+    ImGui::SetNextItemWidth(-1.f);
+    if (ImGui::BeginCombo("##profilesel", preview)) {
         for (int i = 0; i < n; i++) {
             bool on = (i == m_activeProfile);
-            if (on) { ImGui::PushStyleColor(ImGuiCol_Button, COL_ACCENT);
-                      ImGui::PushStyleColor(ImGuiCol_Text, COL_BG); }
-            else    { ImGui::PushStyleColor(ImGuiCol_Button, COL_PANEL_DARK);
-                      ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC); }
-            if (ImGui::Button(m_profiles[i].c_str(), {bw, 30})) {
+            if (ImGui::Selectable(m_profiles[i].c_str(), on)) {
                 m_activeProfile = i;
                 profiles::load(m_profiles[i], m_settings);
                 profiles::writeActive(m_profiles[i]);
                 m_engineDirty = false;
             }
-            ImGui::PopStyleColor(2);
-            if (i < n - 1) ImGui::SameLine(0, gap);
+            if (on) ImGui::SetItemDefaultFocus();
         }
+        ImGui::EndCombo();
     }
 
     ImGui::Spacing();
@@ -730,6 +859,40 @@ void ImGuiUI::drawSettings() {
         ImGui::SetTooltip("In-game front-tyre force that fills the wheel to 100%%. "
                           "HIGHER = lighter (more headroom); LOWER = stronger "
                           "(clips sooner). Scales the force, doesn't cap it.");
+
+    // Auto Max Force: peak sustained front lateral force measured while driving
+    // (kerb-spike filtered, reset on session change). One click calibrates the
+    // Full-Scale Force slider to it, so the hardest corner just touches 100%.
+    {
+        const float MIN_PEAK_N = 2000.f;   // below this you haven't really cornered yet
+        float peak = m_stats.peakLatForceN.load();
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
+        if (peak > 1.f) ImGui::Text("Peak this session: %.0f N", peak);
+        else            ImGui::TextUnformatted("Peak this session: --");
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(peak < MIN_PEAK_N);
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_BG);
+        if (ImGui::SmallButton("Auto-Set")) {
+            m_settings.maxForceN = clampf(peak, 4000.f, 20000.f);
+            m_engineDirty = true;
+        }
+        ImGui::PopStyleColor();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Set Full-Scale Force to the peak cornering force seen so "
+                              "far, so the hardest corner just reaches 100%% wheel torque. "
+                              "Drive 2-3 clean laps first. Lower the slider afterwards if "
+                              "you prefer a stronger wheel with some clipping.");
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_BG);
+        if (ImGui::SmallButton("Reset"))
+            m_stats.peakLatForceN.store(0.f);
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Restart the peak measurement (it also resets automatically "
+                              "when a new session starts).");
+    }
     pct("Load Sensitivity",  m_settings.loadSensitivity,    0.f, 1.f,
         "EXPERIMENTAL. Weights the wheel by front vertical load - lighter when "
         "unloaded, full under load. 0 = off. Only ever lightens.");
@@ -747,15 +910,48 @@ void ImGuiUI::drawSettings() {
         "Wheel lightening when the front tyres slide (>100% = exaggerated).");
     pct("Oversteer Cue",     m_settings.oversteerStrength,  0.f, 1.f,
         "Counter-kick when the rear breaks away.");
-    pct("Lockup Judder",     m_settings.lockupStrength,     0.f, 1.f,
-        "Front-wheel lockup vibration under braking.");
-    pct("Wheelspin Rumble",  m_settings.wheelspinStrength,  0.f, 1.f,
-        "Rear-wheel spin vibration on power.");
     pct("Braking Weight",    m_settings.brakingStrength,    0.f, 1.f,
         "Adds damping under braking - the wheel gets heavier/thicker to TURN while "
         "you're on the brakes. Felt as you steer (trail-braking); nothing when the "
         "wheel is held still. If it feels wrong/oscillates, tick Invert Braking "
         "Weight below.");
+
+    groupHeader("RUMBLE EFFECTS (SINE)");
+    // Lockup judder + wheelspin rumble ride the hardware periodic/sine effect,
+    // which not every base renders. The cues above ride the constant-force
+    // channel and work on any wheel; these need sine support.
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
+    ImGui::TextWrapped("Vibration cues - need a wheel base that supports the sine "
+                       "(periodic) FFB effect. Most direct-drive and belt bases do, but "
+                       "some wheel bases may not. Use \"Send test rumble\" in the WHEEL "
+                       "DEVICE panel to check yours.");
+    ImGui::PopStyleColor();
+    if (m_output.isActive() && !m_output.sineSupported()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_YEL);
+        ImGui::TextWrapped("Your connected wheel reported no sine support - these "
+                           "sliders will have no effect on it.");
+        ImGui::PopStyleColor();
+    }
+    ImGui::Spacing();
+    pct("Lockup Judder",     m_settings.lockupStrength,     0.f, 1.f,
+        "Front-wheel lockup vibration under braking.");
+    ImGui::SetNextItemWidth(-150.f);
+    if (ImGui::SliderFloat("Lockup Pitch (Hz)", &m_settings.lockupHz, 10.f, 60.f, "%.0f Hz"))
+        m_engineDirty = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Vibration frequency of the lockup judder (severity adds up to "
+                          "+30%% on top). Wheel bases render vibration differently - tune "
+                          "until a lockup feels like a sharp judder, clearly faster than "
+                          "Wheelspin Pitch.");
+    pct("Wheelspin Rumble",  m_settings.wheelspinStrength,  0.f, 1.f,
+        "Rear-wheel spin vibration on power.");
+    ImGui::SetNextItemWidth(-150.f);
+    if (ImGui::SliderFloat("Wheelspin Pitch (Hz)", &m_settings.wheelspinHz, 5.f, 40.f, "%.0f Hz"))
+        m_engineDirty = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Vibration frequency of the wheelspin rumble (severity adds up to "
+                          "+30%% on top). Keep it well below Lockup Pitch so the two effects "
+                          "feel distinct - a slow axle tramp vs a fast brake judder.");
 
     groupHeader("OUTPUT");
     pct("Smoothing",         m_settings.smoothing,          0.f, 0.5f,
@@ -770,19 +966,21 @@ void ImGuiUI::drawSettings() {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Ease force in over this long after connecting/unpausing.");
     ImGui::SetNextItemWidth(-150.f);
-    if (ImGui::SliderFloat("TT Start Hold (s)", &m_settings.ttStartHoldSec, 0.f, 10.f, "%.1f s"))
+    if (ImGui::SliderFloat("AI Start Hold (s)", &m_settings.ttStartHoldSec, 0.f, 10.f, "%.1f s"))
         m_engineDirty = true;
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("SAFETY (Time Trial only). When a TT lap starts or you restart "
-                          "from the menu, the game's AI drives the car for a few seconds "
-                          "before handing control over. Force is held OFF for this long "
-                          "after the restart so unexpected forces can't catch your hands. "
-                          "0 = off. Only affects Time Trial restarts (not a stop-and-go on "
-                          "track, and not a mid-lap unpause).");
+        ImGui::SetTooltip("SAFETY (Time Trial / One-Shot & Hot-Lap Qualifying). When a lap "
+                          "starts or you restart from the menu, the game's AI drives the "
+                          "car for a few seconds before handing control over. Force is held "
+                          "OFF for this long after the start so unexpected forces can't "
+                          "catch your hands. 0 = off. Doesn't affect race starts, a "
+                          "stop-and-go on track, or a mid-lap unpause.");
     ImGui::SetNextItemWidth(-150.f);
     int hz = m_settings.ffbUpdateHz;
-    if (ImGui::SliderInt("Update Rate (Hz)", &hz, FFB_MIN_HZ, FFB_MAX_HZ))
+    if (ImGui::SliderInt("Update Rate (Hz)", &hz, FFB_MIN_HZ, FFB_MAX_HZ)) {
         m_settings.ffbUpdateHz = hz;
+        m_engineDirty = true;
+    }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Output ceiling. 60-90 Hz suits most wheels; some drop "
                           "force if updated too fast. Raise gradually.");
@@ -831,8 +1029,8 @@ void ImGuiUI::drawFooter() {
     ImGui::SetCursorPosX(16.f);
     ImGui::AlignTextToFramePadding();
     ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
-    ImGui::TextUnformatted("UDP port 20777   \xC2\xB7   F1 25/26: Telemetry On, 60 Hz, "
-                           "Unrestricted   \xC2\xB7   set in-game FFB to 0%");
+    ImGui::Text("UDP port %u   \xC2\xB7   F1 25/26: Telemetry On, 60 Hz, "
+                "Unrestricted   \xC2\xB7   set in-game FFB to 0%%", m_udp.boundPort());
     ImGui::PopStyleColor();
 
     float bw = ImGui::CalcTextSize("Support on Ko-fi").x + ImGui::GetStyle().FramePadding.x * 2.f;
@@ -846,6 +1044,91 @@ void ImGuiUI::drawFooter() {
     ImGui::PopStyleColor(4);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Enjoying the app? Support development - opens %s", KOFI_URL);
+}
+
+// ── Quick Start Guide (every launch until opted out) ──────────────────────────
+
+void ImGuiUI::drawGuidePopup() {
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({560.f, 0.f}, ImGuiCond_Appearing);
+
+    if (!ImGui::BeginPopupModal("Quick Start Guide", nullptr,
+                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+        return;
+
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
+    ImGui::TextWrapped("Welcome to F1 FFB!");
+    ImGui::PopStyleColor();
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
+    ImGui::TextWrapped("Start things in this order so the app can take control "
+                       "of your wheel before anything else grabs it:");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+
+    // Amber step number + wrapped text, indented past the number column.
+    auto step = [](int n, const char* text) {
+        char num[8];
+        snprintf(num, sizeof(num), "%d.", n);
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_ACCENT);
+        ImGui::TextUnformatted(num);
+        ImGui::PopStyleColor();
+        ImGui::SameLine(30.f);
+        ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - 8.f);
+        ImGui::TextWrapped("%s", text);
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+    };
+
+    step(1, "Start F1 FFB (this app) - you're here.");
+    step(2, "Turn on your wheel base.");
+    step(3, "Select your wheel base under WHEEL DEVICE (click Rescan Devices if "
+            "it isn't listed). The dot turns green when connected - tick "
+            "\"Send test force\" to feel it respond.");
+    step(4, "Start your wheel base's own tuning software, if you use one. Do "
+            "this AFTER step 3 - if it's running first, it can block the app "
+            "from connecting.");
+    step(5, "Start F1 25 / F1 26. In game options set: Telemetry ON, 60 Hz, "
+            "UDP port 20777, 'Your Telemetry' = Unrestricted, and in-game "
+            "Force Feedback strength to 0%.");
+
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
+    ImGui::TextWrapped("Drive! The status pill (top right) turns CONNECTED when "
+                       "telemetry arrives. Force releases automatically in menus, "
+                       "when paused, and while the game's AI drives the car.");
+    ImGui::PopStyleColor();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_YEL);
+    ImGui::TextWrapped("SAFETY");
+    ImGui::PopStyleColor();
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_SEC);
+    ImGui::TextWrapped("Every effort has been made to release the wheel whenever you are "
+                       "not driving, but there is still a chance an unwanted force may be "
+                       "felt - most likely around pause menus, One-Shot / Hot-Lap "
+                       "Qualifying starts, and Time Trial starts. Keep a light but ready "
+                       "grip, and avoid resting your hands or body against the wheel while "
+                       "in menus or waiting to take control.");
+    ImGui::PopStyleColor();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Checkbox("Don't show this again", &m_guideOptOut);
+    ImGui::Spacing();
+
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_BG);
+    if (ImGui::Button("Got it", {140.f, 0.f})) {
+        if (m_guideOptOut) setQuickStartGuideDisabled(true);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::PopStyleColor();
+
+    ImGui::EndPopup();
 }
 
 // ── Donation reminder (every 5th launch) ───────────────────────────────────────

@@ -5,7 +5,8 @@
 #include <atomic>
 #include <functional>
 
-// Callback invoked from the FFB thread at ~500Hz with the computed signals
+// Callback invoked from the FFB thread with the computed signals — event-driven
+// on telemetry arrival, rate-limited by the ffbUpdateHz ceiling
 using FFBCallback = std::function<void(const FFBSignals&)>;
 
 class FFBEngine {
@@ -33,9 +34,11 @@ private:
     float m_smoothTorque   = 0.f;
     float m_smoothFriction = 0.f;
     float m_smoothRumble   = 0.f;
+    float m_rumbleHz       = 20.f;  // smoothed rumble frequency (lockup fast / spin slow)
 
     float m_softGain       = 0.f;   // 0..1 soft-start ramp, reset on release
     float m_clipEma        = 0.f;   // rolling fraction of frames clipping
+    float m_latForceLP     = 0.f;   // ~100ms low-passed |frontLatForce| (Auto Max Force peak)
     float m_prevSteer      = 0.f;   // last telemetry steer (for braking-weight damper)
     float m_steerVelLP     = 0.f;   // low-passed steering velocity (steer/sec)
     int64_t m_ttHoldUntilMs = 0;    // TT-start hold expiry (ms); force held off until then
@@ -44,5 +47,5 @@ private:
     bool    m_ttPending     = false;// awaiting that classification
     int64_t m_lastDropMs    = -1000000; // ms of the last lap-distance reset (restart marker)
     uint8_t m_prevSessionType = 0;  // detects entering Time Trial
-    float   m_dbgPrevLapDist = 0.f; // previous lapDistance (drop detection)
+    float   m_prevLapDist   = 0.f;  // previous lapDistance (lap-reset detection)
 };

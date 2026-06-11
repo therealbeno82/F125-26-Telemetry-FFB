@@ -30,6 +30,25 @@ Asetek, Simagic, Logitech, Thrustmaster, …).
 
 Then set up the game's telemetry — see [Turn on telemetry](#3-turn-on-telemetry-in-f1-25--26) below.
 
+### ⬆ Upgrading from an older version
+
+The app checks for updates on startup and shows a green **UPDATE AVAILABLE**
+notice in the header when a newer release is out — click it to open the
+download page.
+
+Your tuning profiles and settings are stored **next to F1FFB.exe** (the
+`profiles/` folder and a few small `f1ffb_*` files), so to upgrade:
+
+1. Close F1 FFB if it's running.
+2. Download the new ZIP and extract **F1FFB.exe** into your **existing**
+   F1 FFB folder, replacing the old exe.
+3. Done — all your profiles, the active-profile selection and window layout
+   carry straight over.
+
+Don't extract the new ZIP to a fresh folder and run it from there — it would
+start with default settings. (If you did: copy the `profiles/` folder and the
+`f1ffb_*` files from the old folder into the new one.)
+
 *Looking for older versions or release notes? See the [Releases page](https://github.com/therealbeno82/F125-26-Telemetry-FFB/releases). Want to build it yourself? See [Quick Start](#quick-start).*
 
 ---

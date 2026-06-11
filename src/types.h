@@ -17,10 +17,20 @@ constexpr uint8_t PKT_CAR_STATUS= 7;
 constexpr uint8_t PKT_MOTION_EX = 13;
 constexpr uint16_t UDP_PORT      = 20777;
 
-// Session-type enum value for Time Trial (Session packet m_sessionType). Used to
-// scope the TT-start hold so race-start launches (also from a standstill, but
-// player-controlled) aren't affected.
-constexpr uint8_t SESSION_TYPE_TIME_TRIAL = 18;
+// Session-type enum values (Session packet m_sessionType, F1 24/25/26 appendix).
+constexpr uint8_t SESSION_TYPE_ONE_SHOT_Q        = 9;   // One-Shot / Hot-Lap Qualifying
+constexpr uint8_t SESSION_TYPE_ONE_SHOT_SHOOTOUT = 14;  // One-Shot Sprint Shootout
+constexpr uint8_t SESSION_TYPE_TIME_TRIAL        = 18;
+
+// Modes where the game's AI drives the player's car at the start of a lap
+// (entering the mode, a restart, or the run-up to the line) before handing
+// over. The AI-start hold is scoped to these so race-start launches — also
+// from a standstill, but player-controlled — keep force.
+inline bool sessionHasAiLapStart(uint8_t t) {
+    return t == SESSION_TYPE_ONE_SHOT_Q
+        || t == SESSION_TYPE_ONE_SHOT_SHOOTOUT
+        || t == SESSION_TYPE_TIME_TRIAL;
+}
 
 // FFB output-rate bounds. The default rate is conservative; the maximum is left
 // generous so capable wheels aren't limited. Note that some DirectInput drivers
@@ -48,20 +58,13 @@ constexpr int64_t FFB_KEEPALIVE_MS = 22;
 struct TelemetryState {
     // Motion packet
     float lateralG        = 0.f;   // g-force lateral
-    float longitudinalG   = 0.f;
-    float yaw             = 0.f;   // rad/s
-    float roll            = 0.f;
 
     // Motion Ex packet (player car)
     float frontSlipAngle  = 0.f;   // avg front tyre slip angle (rad)
     float rearSlipAngle   = 0.f;   // avg rear  tyre slip angle (rad)
-    float suspFL          = 0.f;   // suspension deflection FL (m)
-    float suspFR          = 0.f;   // suspension deflection FR (m)
     float frontLatForce   = 0.f;   // FL+FR tyre lateral force (N) — true SAT source
     float frontLonForce   = 0.f;   // FL+FR tyre longitudinal force (N) — braking load
     float frontVertForce  = 0.f;   // FL+FR tyre vertical load (N) — weight + downforce
-    float suspVelFL       = 0.f;   // suspension velocity FL (m/s) — kerb impacts
-    float suspVelFR       = 0.f;   // suspension velocity FR (m/s)
     float sideslip        = 0.f;   // vehicle sideslip angle (rad) — oversteer cue
     float frontSlipRatio  = 0.f;   // avg front slip ratio (-=lockup, +=spin)
     float rearSlipRatio   = 0.f;   // avg rear  slip ratio (+=wheelspin)
@@ -83,7 +86,8 @@ struct TelemetryState {
 struct FFBSignals {
     float torque   = 0.f;   // -1..1   main wheel force
     float friction = 0.f;   //  0..1   damping
-    float rumble   = 0.f;   //  0..1   kerb vibration
+    float rumble   = 0.f;   //  0..1   lockup/wheelspin vibration magnitude
+    float rumbleHz = 20.f;  //  Hz     vibration frequency (lockup=fast, spin=slow)
 };
 
 // ── User-tunable settings ─────────────────────────────────────────────────────
@@ -100,16 +104,20 @@ struct FFBSettings {
     float maxForceN         = 12000.f; // front lateral force mapped to full torque
     bool  invertForce       = false;   // flip wheel direction if it pulls the wrong way
     float lockupStrength    = 0.60f;   // front lockup judder under braking
+    float lockupHz          = 28.f;    // lockup judder base frequency (ramps +30% with severity)
     float wheelspinStrength = 0.40f;   // rear wheelspin rumble on power
+    float wheelspinHz       = 10.f;    // wheelspin rumble base frequency (ramps +30% with severity)
     float brakingStrength   = 0.50f;   // wheel firms up under braking load
     bool  brakingInvert     = false;   // flip braking-weight direction if it pulls off-centre
     float maxOutput         = 1.00f;   // hard cap on final output (0..1) — safety/kids
     float softStartSec      = 0.50f;   // ramp force in over this long after re-arm/connect
-    float ttStartHoldSec    = 6.00f;   // Time Trial: hold force off this long after a standstill (AI drives the start)
+    float ttStartHoldSec    = 6.00f;   // AI-start hold (TT / one-shot quali): force off this long after a lap start/restart
+                                       // (key name kept as ttStartHoldSec so existing profiles stay valid)
     float minForce          = 0.00f;   // lift small forces past a belt/gear deadzone (0..0.3)
     float loadSensitivity   = 0.00f;   // weight steering by front vertical load (0=off..1)
     float loadRefN          = 8000.f;  // front vert load (FL+FR) treated as full weight
     float testForce         = 0.f;     // diagnostic: steady torque bypassing physics (not saved)
+    float testRumble        = 0.f;     // diagnostic: steady rumble bypassing physics (not saved)
 };
 
 // ── App-wide statistics ───────────────────────────────────────────────────────
@@ -125,12 +133,8 @@ struct AppStats {
     std::atomic<uint8_t>  sessionType{0};         // Session packet m_sessionType (18 = Time Trial)
     std::atomic<float>    lapDistance{0.f};       // Lap Data m_lapDistance (m into the lap; distinguishes restart vs mid-lap unpause)
     std::atomic<bool>     ttHolding{false};       // TT-start hold active (force held off, AI driving from standstill)
-    // TEMP diagnostics for the TT-start hold investigation
-    std::atomic<uint32_t> dbgRearms{0};           // count of freeze→advance re-arms (streak changes)
-    std::atomic<uint32_t> dbgDrops{0};            // count of lapDistance resets (>100m backward jump)
-    std::atomic<float>    dbgDropSpeed{0.f};       // speedKmh at the last lapDistance reset
-    std::atomic<bool>     deviceConnected{false};
-    char                  deviceName[128] = "None";
+    std::atomic<float>    peakLatForceN{0.f};     // peak smoothed |frontLatForce| while armed (Auto Max Force);
+                                                  // written by engine, reset by UDP thread on session change / GUI
 
     // Event-driven FFB wake. The UDP thread bumps motionSeq + notifies wakeCv on
     // each fresh telemetry frame (Motion Ex); the FFB thread waits on it so it can
@@ -143,9 +147,6 @@ struct AppStats {
 // ── Inline helpers ────────────────────────────────────────────────────────────
 inline float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
-}
-inline float lerpf(float a, float b, float t) {
-    return a + t * (b - a);
 }
 inline float signf(float v) {
     return v >= 0.f ? 1.f : -1.f;

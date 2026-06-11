@@ -123,7 +123,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     g_hwnd = CreateWindowExW(
         0, L"F1FFBClass", title,
         WS_OVERLAPPEDWINDOW,
-        100, 100, 1200, 780,
+        100, 100, 1200, 900,
         nullptr, nullptr, hInst, nullptr);
 
     if (!createD3D(g_hwnd)) {
@@ -162,12 +162,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
 
     UdpReceiver udp(g_telem, g_stats);
-    if (!udp.start()) {
-        MessageBoxW(nullptr,
-            L"Could not bind UDP port 20777.\n"
+    uint16_t udpPort = loadUdpPort();   // user-set port (global), defaults to 20777
+    if (!udp.start(udpPort)) {
+        wchar_t msg[256];
+        swprintf(msg, _countof(msg),
+            L"Could not bind UDP port %u.\n"
             L"Another app may already be using it.\n"
-            L"Close it and restart F1 FFB.",
-            L"F1 FFB", MB_OK | MB_ICONWARNING);
+            L"Close it and restart F1 FFB, or change the port in the app.",
+            (unsigned)udpPort);
+        MessageBoxW(nullptr, msg, L"F1 FFB", MB_OK | MB_ICONWARNING);
     }
 
     // FFB engine: runs at ffbUpdateHz, calls output directly
@@ -178,7 +181,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         });
     engine.start();
 
-    ImGuiUI ui(g_telem, g_settings, g_signals, g_stats, wheel);
+    ImGuiUI ui(g_telem, g_settings, g_signals, g_stats, wheel, udp);
     ui.init(g_hwnd, g_pd3dDevice, g_pd3dCtx);
 
     // ── Main loop ─────────────────────────────────────────────────────────────

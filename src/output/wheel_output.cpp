@@ -65,7 +65,7 @@ void WheelOutput::enumerate() {
 // ── Open / close ───────────────────────────────────────────────────────────────
 bool WheelOutput::openDevice(int index) {
     std::lock_guard<std::mutex> lk(m_lock);
-    closeDevice();
+    closeDeviceLocked();
 
     if (index < 0 || index >= (int)m_devices.size()) {
         m_error = "Invalid device index";
@@ -139,8 +139,9 @@ bool WheelOutput::openDevice(int index) {
     m_error.clear();
     m_sendOk.store(0);
     m_sendErrors.store(0);
-    m_lastDamperLvl = 0x80000000;   // force the first damper/sine update through
-    m_lastSineLvl   = 0x80000000;
+    m_lastDamperLvl  = LVL_UNSET;   // force the first damper/sine update through
+    m_lastSineLvl    = LVL_UNSET;
+    m_lastSinePeriod = LVL_UNSET;
     return true;
 }
 
@@ -164,7 +165,15 @@ void WheelOutput::releaseEffects() {
     drop(m_effSine);
 }
 
+// Public close: takes the lock so the device can never be torn down while the
+// FFB thread is mid-send(). openDevice (already holding the lock) uses the
+// unlocked body directly.
 void WheelOutput::closeDevice() {
+    std::lock_guard<std::mutex> lk(m_lock);
+    closeDeviceLocked();
+}
+
+void WheelOutput::closeDeviceLocked() {
     releaseEffects();
     if (m_haptic) {
         SDL_HapticClose(static_cast<SDL_Haptic*>(m_haptic));
@@ -214,18 +223,30 @@ void WheelOutput::send(const FFBSignals& sig) {
         }
     }
 
-    // Sine — rumble. Skip the driver round-trip when the magnitude is unchanged.
+    // Sine — rumble. The engine varies the frequency with the effect source
+    // (lockup = fast judder, wheelspin = slow tramp). The pitch is applied only
+    // when a rumble episode STARTS (silent → audible): re-sending a changed
+    // period to a PLAYING effect makes some DirectInput drivers stop/restart it
+    // on every update, which can mute the effect entirely. While audible, only
+    // the magnitude is updated — the traffic pattern proven to work.
     if (m_effSine >= 0) {
         int mag = (int)(clampf(finiteOrZero(sig.rumble), 0.f, 1.f) * SDL_FORCE_MAX);
+        float hzf = clampf(finiteOrZero(sig.rumbleHz), 5.f, 80.f);
+        int period = clampi((int)(1000.f / hzf + 0.5f), 12, 200);   // ms
+        if (m_lastSinePeriod == LVL_UNSET || (mag > 0 && m_lastSineLvl <= 0))
+            m_lastSinePeriod = period;   // episode start: latch the new pitch
         if (mag != m_lastSineLvl) {
             SDL_HapticEffect e{};
             e.type                   = SDL_HAPTIC_SINE;
             e.periodic.direction.type = SDL_HAPTIC_CARTESIAN;
             e.periodic.direction.dir[0] = 1;
-            e.periodic.period        = 50;
+            e.periodic.period        = (Uint16)m_lastSinePeriod;
             e.periodic.magnitude     = (Sint16)mag;
             e.periodic.length        = SDL_HAPTIC_INFINITY;
-            SDL_HapticUpdateEffect(h, m_effSine, &e);
+            if (SDL_HapticUpdateEffect(h, m_effSine, &e) < 0) {
+                if (m_sendErrors.fetch_add(1) == 0)   // capture the first error only
+                    m_error = std::string("SDL_HapticUpdateEffect (rumble): ") + SDL_GetError();
+            }
             m_lastSineLvl = mag;
         }
     }

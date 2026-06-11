@@ -25,6 +25,20 @@ constexpr const char* NAG_DISABLED_PATH = "f1ffb_nag_off.txt";
 bool isDonationNagDisabled();
 void setDonationNagDisabled(bool disabled);
 
+// Persistent "user dismissed the Quick Start Guide" flag. The guide pops up on
+// every launch until the user ticks "don't show this again".
+constexpr const char* GUIDE_DISABLED_PATH = "f1ffb_guide_off.txt";
+bool isQuickStartGuideDisabled();
+void setQuickStartGuideDisabled(bool disabled);
+
+// User-configurable UDP port the game sends telemetry to. Stored GLOBALLY (next
+// to the exe, NOT per-profile): it's a machine/setup value, so switching a
+// tuning profile must never change which port receives telemetry. Returns
+// UDP_PORT (20777) when the file is absent or holds an out-of-range value.
+constexpr const char* UDP_PORT_PATH = "f1ffb_udp_port.txt";
+uint16_t loadUdpPort();
+void     saveUdpPort(uint16_t port);
+
 // Pin every field to the same valid range its GUI slider enforces. Called
 // automatically at the end of loadSettings so a corrupt or hand-edited file
 // can never inject out-of-range values into the running app. Safe to call

@@ -51,6 +51,7 @@ set(APP_SOURCES
     src/udp_receiver.cpp
     src/ffb_engine.cpp
     src/settings_io.cpp
+    src/update_check.cpp
     src/output/wheel_output.cpp
     src/gui/imgui_ui.cpp
     app.rc                 # application icon
@@ -79,6 +80,11 @@ target_compile_options(F1FFB PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W3 /MP /utf-8>
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Wextra>
 )
+
+# ── Optional: standalone haptic diagnostic (console app, not built by default)
+# Build with:  cmake --build build --config Release --target HapticProbe
+add_executable(HapticProbe EXCLUDE_FROM_ALL tools/haptic_probe.cpp)
+target_link_libraries(HapticProbe PRIVATE SDL2::SDL2-static winmm)
 
 # ── Copy exe to project root after build ─────────────────────────────────────
 add_custom_command(TARGET F1FFB POST_BUILD

@@ -105,6 +105,15 @@ FFBSignals FFBEngine::compute(float dt) {
         return { t, 0.f, 0.f };
     }
 
+    // Diagnostic: steady rumble at the Lockup Pitch, bypassing telemetry —
+    // proves the rumble channel works on this base (and auditions the pitch
+    // sliders) independent of slip detection ever firing.
+    if (c.testRumble > 0.001f) {
+        float r = clampf(c.testRumble, 0.f, 1.f);
+        m_smoothTorque = 0.f; m_smoothFriction = 0.f; m_smoothRumble = r;
+        return { 0.f, 0.f, r, c.lockupHz };
+    }
+
     // ── SAFETY: release the wheel unless the car is actively being driven ────
     // Two independent pause signals, covering both game modes:
     //  1. Frame freeze — single-player / time-trial pause and menus FREEZE the
@@ -129,37 +138,35 @@ FFBSignals FFBEngine::compute(float dt) {
         // the player isn't driving, so release the wheel.
         const bool aiDriving = m_stats.aiInControl.load(std::memory_order_relaxed);
 
-        // ── TT start hold ────────────────────────────────────────────────────
-        // In Time Trial the AI drives the car for a few seconds at the start of a
-        // lap (entering TT, or a menu restart). Both go through a load, which shows
-        // up as a freeze→advance RE-ARM and/or a lap-distance RESET. We arm the
-        // hold on a re-arm or on entering TT, then 1.2s later cancel it ONLY if it
-        // was actually a mid-lap UNPAUSE — i.e. no lap reset happened AND we're
-        // deep into the lap. A restart resets the lap (kept); entering TT sits at
-        // the line (kept); a flying-lap line-crossing has a reset but NO re-arm so
-        // it never arms — a hot lap keeps its force. Scoped to Time Trial so
-        // race-start launches (player-controlled) are unaffected.
-        const uint8_t sess     = m_stats.sessionType.load(std::memory_order_relaxed);
-        const bool isTT        = (sess == SESSION_TYPE_TIME_TRIAL);
-        const bool enteredTT   = isTT && (m_prevSessionType != SESSION_TYPE_TIME_TRIAL);
-        m_prevSessionType      = sess;
+        // ── AI start hold (Time Trial / One-Shot & Hot-Lap Qualifying) ───────
+        // In these modes the AI drives the car at the start of a lap — entering
+        // the mode, a menu restart, or the flying run-up to the line in one-shot
+        // qualifying — before handing control to the player. All of them go
+        // through a load, which shows up as a freeze→advance RE-ARM and/or a
+        // lap-distance RESET. We arm the hold on a re-arm or on entering the
+        // mode, then later cancel it ONLY if it was actually a mid-lap UNPAUSE —
+        // i.e. no lap reset happened AND we're deep into the lap. A restart
+        // resets the lap (kept); a one-shot flying start sits before the line so
+        // lapDistance is negative (kept); a flying-lap line-crossing has a reset
+        // but NO re-arm so it never arms — a hot lap in progress keeps its
+        // force. Scoped via sessionHasAiLapStart so race-start launches
+        // (player-controlled) are unaffected.
+        const uint8_t sess      = m_stats.sessionType.load(std::memory_order_relaxed);
+        const bool aiStartMode  = sessionHasAiLapStart(sess);
+        const bool enteredMode  = aiStartMode && !sessionHasAiLapStart(m_prevSessionType);
+        m_prevSessionType       = sess;
 
         const float lapDist    = m_stats.lapDistance.load(std::memory_order_relaxed);
-        const bool dropped     = (lapDist < m_dbgPrevLapDist - 100.f);
-        m_dbgPrevLapDist       = lapDist;
+        const bool dropped     = (lapDist < m_prevLapDist - 100.f);
+        m_prevLapDist          = lapDist;
         const bool rearmed     = (streak != m_prevStreak);
         m_prevStreak           = streak;
 
         if (dropped) m_lastDropMs = now;   // remember the last lap reset (restart marker)
 
-        // TEMP diagnostics
-        if (rearmed) m_stats.dbgRearms.fetch_add(1, std::memory_order_relaxed);
-        if (dropped) { m_stats.dbgDrops.fetch_add(1, std::memory_order_relaxed);
-                       m_stats.dbgDropSpeed.store(s.speedKmh, std::memory_order_relaxed); }
-
         bool ttHold = false;
-        if (isTT && c.ttStartHoldSec > 0.01f) {
-            if (rearmed || enteredTT) {                    // a load just finished
+        if (aiStartMode && c.ttStartHoldSec > 0.01f) {
+            if (rearmed || enteredMode) {                  // a load just finished
                 m_ttHoldUntilMs = now + (int64_t)(c.ttStartHoldSec * 1000.f);
                 m_ttCheckMs     = now + 2500;              // classify late: the lap reset can lag
                 m_ttPending     = true;
@@ -184,9 +191,22 @@ FFBSignals FFBEngine::compute(float dt) {
             m_softGain = 0.f;     // restart the soft-start ramp on next resume
             m_clipEma  = 0.f;
             m_prevSteer = s.steer; m_steerVelLP = 0.f;   // no braking-weight spike on resume
+            m_latForceLP = 0.f;   // peak tracker ramps fresh on resume
             m_stats.clipLevel.store(0.f, std::memory_order_relaxed);
             return { 0.f, 0.f, 0.f };
         }
+    }
+
+    // ── Auto Max Force: track the peak sustained front lateral force ─────────
+    // A ~100ms low-pass rejects single-frame spikes (kerb strikes, half-spins)
+    // that a real corner wouldn't sustain, so the recorded peak reflects genuine
+    // cornering load. The GUI offers one-click "set Full-Scale Force to this".
+    // Only measured here, while armed — paused/AI/TT frames never pollute it.
+    {
+        const float aF = clampf(dt / (0.10f + dt), 0.f, 1.f);
+        m_latForceLP += aF * (std::fabs(s.frontLatForce) - m_latForceLP);
+        if (m_latForceLP > m_stats.peakLatForceN.load(std::memory_order_relaxed))
+            m_stats.peakLatForceN.store(m_latForceLP, std::memory_order_relaxed);
     }
 
     const float speed = s.speedKmh;
@@ -233,10 +253,10 @@ FFBSignals FFBEngine::compute(float dt) {
 
     // Write derived signals back for the GUI to display
     // (the engine owns these fields so no lock needed)
-    const_cast<TelemetryState&>(m_state).understeer   = understeer;
-    const_cast<TelemetryState&>(m_state).oversteer    = oversteer;
-    const_cast<TelemetryState&>(m_state).frontSlipNorm = frontNorm;
-    const_cast<TelemetryState&>(m_state).rearSlipNorm  = rearNorm;
+    m_state.understeer    = understeer;
+    m_state.oversteer     = oversteer;
+    m_state.frontSlipNorm = frontNorm;
+    m_state.rearSlipNorm  = rearNorm;
 
     float torque = baseTorque;
 
@@ -282,8 +302,23 @@ FFBSignals FFBEngine::compute(float dt) {
     float spin = clampf((s.rearSlipRatio - SPIN_DEADZONE) / SPIN_RANGE, 0.f, 1.f)
                * clampf(s.throttle * 2.f, 0.f, 1.f);
 
-    rumble = clampf(rumble + lockup * c.lockupStrength
-                           + spin   * c.wheelspinStrength, 0.f, 1.f);
+    const float lockupAmt = lockup * c.lockupStrength;
+    const float spinAmt   = spin   * c.wheelspinStrength;
+    rumble = clampf(rumble + lockupAmt + spinAmt, 0.f, 1.f);
+
+    // Rumble frequency: a locked front tyre reads as a fast judder, rear
+    // wheelspin as a slower axle tramp. The base pitch of each is a user
+    // setting (wheel bases render periodic effects differently); severity adds
+    // up to +30% on top so a deeper lockup/spin buzzes faster. When both fire
+    // the frequency blends by their contributions. Held at its last value
+    // while silent so the smoothed decay tail keeps its pitch.
+    const float SEVERITY_RAMP = 0.30f;
+    float targetHz = m_rumbleHz;
+    if (lockupAmt + spinAmt > 1e-4f) {
+        const float lockupHz = c.lockupHz    * (1.f + SEVERITY_RAMP * lockup);
+        const float spinHz   = c.wheelspinHz * (1.f + SEVERITY_RAMP * spin);
+        targetHz = (lockupAmt * lockupHz + spinAmt * spinHz) / (lockupAmt + spinAmt);
+    }
 
     // ── 7b. Braking weight (software damper) ─────────────────────────────────
     // The hardware DAMPER channel is ignored by many bases (direct-drive
@@ -338,6 +373,9 @@ FFBSignals FFBEngine::compute(float dt) {
     m_smoothTorque   += a  * (torque   - m_smoothTorque);
     m_smoothFriction += a  * (friction - m_smoothFriction);
     m_smoothRumble   += aR * (rumble   - m_smoothRumble);
+    // Glide the frequency too so alternating lockup/spin dominance can't make
+    // the pitch jump around frame to frame.
+    m_rumbleHz       += aR * (targetHz - m_rumbleHz);
 
     // ── 10. Min-force: deadzone removal for belt/gear wheels ─────────────────
     // Belt/gear bases have static friction that swallows small forces, so the
@@ -364,6 +402,7 @@ FFBSignals FFBEngine::compute(float dt) {
     return {
         clampf(outTorque        * g, -cap, cap),
         clampf(m_smoothFriction * g,  0.f, cap),
-        clampf(m_smoothRumble   * g,  0.f, cap)
+        clampf(m_smoothRumble   * g,  0.f, cap),
+        m_rumbleHz
     };
 }
